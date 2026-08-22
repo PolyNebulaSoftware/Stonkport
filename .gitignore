@@ -1,0 +1,10 @@
+# Godot
+.godot/
+*.translation
+
+# Export output
+build/
+
+# System
+.DS_Store
+Thumbs.db

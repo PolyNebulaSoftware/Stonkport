@@ -1,0 +1,35 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+
+config_version=5
+
+[application]
+
+config/name="LocalStoport"
+config/description="Client-side stock portfolio tracker rendered entirely with Godot UI."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+boot_splash/bg_color=Color(0.0509804, 0.0666667, 0.0901961, 1)
+config/icon="res://icon.svg"
+
+[autoload]
+
+MarketSimulator="*res://scripts/autoload/market_simulator.gd"
+PortfolioManager="*res://scripts/autoload/portfolio_manager.gd"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[gui]
+
+theme/custom="res://theme/theme.tres"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"

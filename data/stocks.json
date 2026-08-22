@@ -1,0 +1,22 @@
+{
+	"AAPL": { "name": "Apple Inc.", "sector": "Technology", "base_price": 185.4, "volatility": 0.018 },
+	"MSFT": { "name": "Microsoft Corp.", "sector": "Technology", "base_price": 415.2, "volatility": 0.016 },
+	"NVDA": { "name": "NVIDIA Corp.", "sector": "Technology", "base_price": 480.6, "volatility": 0.032 },
+	"GOOGL": { "name": "Alphabet Inc.", "sector": "Technology", "base_price": 140.85, "volatility": 0.02 },
+	"AMD": { "name": "Advanced Micro Devices", "sector": "Technology", "base_price": 145.1, "volatility": 0.03 },
+	"CRM": { "name": "Salesforce Inc.", "sector": "Technology", "base_price": 215.3, "volatility": 0.022 },
+	"META": { "name": "Meta Platforms", "sector": "Communication", "base_price": 310.75, "volatility": 0.024 },
+	"NFLX": { "name": "Netflix Inc.", "sector": "Communication", "base_price": 445.9, "volatility": 0.025 },
+	"DIS": { "name": "Walt Disney Co.", "sector": "Communication", "base_price": 95.4, "volatility": 0.019 },
+	"AMZN": { "name": "Amazon.com Inc.", "sector": "Consumer", "base_price": 145.6, "volatility": 0.022 },
+	"TSLA": { "name": "Tesla Inc.", "sector": "Consumer", "base_price": 245.3, "volatility": 0.042 },
+	"NKE": { "name": "Nike Inc.", "sector": "Consumer", "base_price": 105.2, "volatility": 0.016 },
+	"SBUX": { "name": "Starbucks Corp.", "sector": "Consumer", "base_price": 91.4, "volatility": 0.015 },
+	"KO": { "name": "Coca-Cola Co.", "sector": "Consumer", "base_price": 61.8, "volatility": 0.011 },
+	"JPM": { "name": "JPMorgan Chase", "sector": "Financials", "base_price": 155.9, "volatility": 0.017 },
+	"V": { "name": "Visa Inc.", "sector": "Financials", "base_price": 260.4, "volatility": 0.014 },
+	"JNJ": { "name": "Johnson & Johnson", "sector": "Healthcare", "base_price": 160.25, "volatility": 0.012 },
+	"PFE": { "name": "Pfizer Inc.", "sector": "Healthcare", "base_price": 38.6, "volatility": 0.017 },
+	"XOM": { "name": "Exxon Mobil", "sector": "Energy", "base_price": 110.7, "volatility": 0.02 },
+	"BA": { "name": "Boeing Co.", "sector": "Industrials", "base_price": 210.15, "volatility": 0.028 }
+}

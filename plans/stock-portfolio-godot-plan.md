@@ -214,19 +214,19 @@ renderer/rendering_method.mobile="gl_compatibility"
 
 ## 13. Implementation Checklist
 
-- [ ] Scaffold project: `project.godot` (autoloads, window/stretch, gl_compatibility), `icon.svg`, `theme/theme.tres`
-- [ ] Create `data/stocks.json` universe (12–20 tickers with sector, base price, volatility)
-- [ ] Implement `MarketSimulator` autoload: universe load, seeded random walk, tick timer, `get_history` OHLC generation, signals
-- [ ] Implement `PortfolioManager` autoload: state, derived values, transactions, save/load to `user://` with demo seed + web fallback
-- [ ] Build `main.tscn` shell: header bar + `TabContainer` + theme wiring
-- [ ] Dashboard screen: summary cards + `DonutChart` allocation + top movers
-- [ ] Holdings screen: `Tree` table + Add/Edit/Remove + `position_dialog.tscn` with validation
-- [ ] Chart screen: `CandlestickChart` `_draw()` widget (grid, candles, volume, crosshair, tooltip) + ticker/timeframe selectors
-- [ ] Watchlist screen: live price rows + add/remove
-- [ ] Settings dialog: refresh interval, reset demo data
-- [ ] `export_presets.cfg` HTML5 preset + optional custom `web/index.html` shell
-- [ ] Export to `build/web`, serve locally, verify persistence across reload
-- [ ] `README.md` with setup/export/run instructions
+- [x] Scaffold project: `project.godot` (autoloads, window/stretch, gl_compatibility), `icon.svg`, `theme/theme.tres`
+- [x] Create `data/stocks.json` universe (12–20 tickers with sector, base price, volatility)
+- [x] Implement `MarketSimulator` autoload: universe load, seeded random walk, tick timer, `get_history` OHLC generation, signals
+- [x] Implement `PortfolioManager` autoload: state, derived values, transactions, save/load to `user://` with demo seed + web fallback
+- [x] Build `main.tscn` shell: header bar + `TabContainer` + theme wiring
+- [x] Dashboard screen: summary cards + `DonutChart` allocation + top movers
+- [x] Holdings screen: `Tree` table + Add/Edit/Remove + `position_dialog.tscn` with validation
+- [x] Chart screen: `CandlestickChart` `_draw()` widget (grid, candles, volume, crosshair, tooltip) + ticker/timeframe selectors
+- [x] Watchlist screen: live price rows + add/remove
+- [x] Settings dialog: refresh interval, reset demo data
+- [x] `export_presets.cfg` HTML5 preset + optional custom `web/index.html` shell
+- [x] Export to `build/web`, serve locally, verify persistence across reload
+- [x] `README.md` with setup/export/run instructions
 
 ## 14. Risks & Mitigations
 
@@ -237,3 +237,20 @@ renderer/rendering_method.mobile="gl_compatibility"
 | HiDPI blurry custom drawing | Scale drawing by `content_scale_factor` |
 | WASM download size | Vector drawing only, no large textures; default font; single pck |
 | Random-walk prices look unrealistic | Tune volatility per ticker; anchor history last bar to current price |
+
+## 15. Reference: Godot as an Embedded Library (libgodot)
+
+**Local example:** `Y:\OpenSource\libgodot_example-master` (upstream: https://github.com/zorbathut/libgodot_example) — a working demo of embedding the Godot engine as a **linkable shared library inside a host C++ program** ("LibGodot"), instead of running the standalone player binary.
+
+What it demonstrates:
+
+- Builds Godot itself as a shared library (`godot/` submodule) plus matching `godot-cpp` bindings, then links a small C++ driver against both (`driver-cpp-shared/main.cpp`, built via `driver-cpp-shared/SConstruct`); the whole build + run is orchestrated by `runit-cpp-shared.py`.
+- Boots the engine from host code through the C API: `libgodot_create_godot_instance(argc, argv, init_callback)` → `GodotInstance::start()` → per-frame `godot_instance->iteration()` loop → `libgodot_destroy_godot_instance(instance)`.
+- Drives the scene tree directly from C++ with **no GDScript**: fetches the `SceneTree` from `Engine::get_singleton()->get_main_loop()` and updates a `Label` in the loaded scene every frame.
+- Ships a minimal sample project (`project/project.godot`, `project/main.tscn`) that the driver launches with `--path project`.
+
+Relevance to this plan:
+
+- **Alternative delivery target**: the same LocalStoport scenes / scripts / autoloads could be hosted inside a native application (a desktop shell, or embedded within another engine or tool) using this approach, complementing the WASM web export in §11–12.
+- **Caveats** (per its README): desktop-only (Windows/Linux; no working web path — the author's WASM attempt stalls on virtual-filesystem access); requires building the full engine twice (engine + godot-cpp); dynamic linking only (static linking is broken upstream, godotengine/godot#111876); supports a single open→shutdown lifecycle with no parallel instances; Godot must create its own window or run headless (no rendering into an app-controlled window yet).
+- For a production-grade native-embed setup, the author also maintains [`dieselhorse_godot_framework`](https://github.com/zorbathut/dieselhorse_godot_framework), a vendoring framework that handles many build corner cases.
