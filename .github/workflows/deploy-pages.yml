@@ -1,0 +1,52 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: "4.7.2"
+
+jobs:
+  deploy:
+    name: Export & Deploy
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Godot engine + export templates
+        uses: abarichello/godot-ci@master
+        with:
+          godot_version: ${{ env.GODOT_VERSION }}
+
+      - name: Import assets (fresh checkout)
+        run: godot --headless --path . --import
+
+      - name: Export Web build
+        run: godot --headless --path . --export-release "Web" web_dist/index.html
+
+      - name: Prepare Pages artifact
+        run: touch web_dist/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web_dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

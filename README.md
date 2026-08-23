@@ -45,6 +45,10 @@ godot --headless --path . --export-release "Windows Exe" build/windows/LocalStop
 
 Run `LocalStoport.exe` and it minimizes straight to the tray via the built-in `StatusIndicator` node. Left-click the tray icon to serve `web_dist/` from a tiny built-in HTTP server on `127.0.0.1:17400` and open it in your default browser — fully offline, no Python needed. Right-click for **Open Web App / Show Window / Quit**; closing the window hides to tray instead of quitting. Launching a second copy just reveals the running one in the browser and exits. The web build is packed into the exe (`embed_pck`), but a `web_dist/` folder next to the exe takes precedence if present.
 
+## Hosting (GitHub Pages)
+
+Every push to `main` rebuilds the web export with the [godot-ci](https://github.com/marketplace/actions/godot-ci) action and deploys it as a Pages site — see [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml). One-time setup: repo **Settings → Pages → Source: GitHub Actions**. The app then lives at `https://<user>.github.io/<repo>/`; if the loading bar stalls after a deploy, hard-refresh once to bust a cached `index.pck`.
+
 ## Verify persistence
 
 Add/edit/remove positions in the browser, then refresh the page — the portfolio reloads from IndexedDB. On desktop it round-trips through `%APPDATA%/Godot/app_userdata/LocalStoport/portfolio.json`.
