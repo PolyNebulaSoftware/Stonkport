@@ -319,7 +319,7 @@ func _load_or_migrate() -> void:
 		save()
 		trades_changed.emit()
 		return
-	_seed_demo()
+	# _seed_demo()
 	save()
 	trades_changed.emit()
 

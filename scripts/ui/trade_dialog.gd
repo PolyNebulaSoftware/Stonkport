@@ -53,7 +53,7 @@ func _build_create_box() -> Control:
 	_create_box.add_theme_constant_override("separation", 6)
 
 	_f.asset = LineEdit.new()
-	_f.asset.placeholder_text = "AAPL"
+	_f.asset.placeholder_text = "GLD"
 	_form_row(_create_box, "Asset", _f.asset, 180)
 
 	_f.type = OptionButton.new()
@@ -117,7 +117,7 @@ func _build_edit_box() -> Control:
 	_edit_box.add_child(_summary_box)
 
 	_m.asset = LineEdit.new()
-	_m.asset.placeholder_text = "AAPL"
+	_m.asset.placeholder_text = "GLD"
 	_form_row(_edit_box, "Asset", _m.asset, 180)
 
 	_m.type = OptionButton.new()

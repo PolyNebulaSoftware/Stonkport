@@ -74,7 +74,10 @@ static func breakdown(trade: Dictionary, price_provider := Callable()) -> Dictio
 			exit_value += qty * price
 			qty_open = maxf(qty_open - qty, 0.0)
 			cost_basis = maxf(cost_basis - avg * qty, 0.0)
-	var avg_entry := (cost_basis / qty_open) if qty_open > EPSILON else 0.0
+	# Average entry across ALL entry logs (stays valid after closing); the
+	# open-position basis is tracked separately for unrealized P/L.
+	var avg_entry := (entry_cost / entry_qty) if entry_qty > EPSILON else 0.0
+	var avg_entry_open := (cost_basis / qty_open) if qty_open > EPSILON else 0.0
 	var mark := 0.0
 	var unrealized := 0.0
 	if qty_open > EPSILON:
@@ -83,7 +86,7 @@ static func breakdown(trade: Dictionary, price_provider := Callable()) -> Dictio
 		if mark <= 0.0:
 			var logs: Array = trade.get("logs", [])
 			mark = float(logs[-1].get("price", 0.0)) if not logs.is_empty() else 0.0
-		unrealized = sign * (mark - avg_entry) * qty_open
+		unrealized = sign * (mark - avg_entry_open) * qty_open
 	var pnl := realized + unrealized - fees
 	var pnl_pct := (pnl / entry_cost * 100.0) if entry_cost > EPSILON else 0.0
 	return {

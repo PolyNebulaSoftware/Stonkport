@@ -69,7 +69,12 @@ func _ready() -> void:
 	_build_tray_ui()
 	# Closing the window must hide to tray, not terminate the app.
 	get_tree().auto_accept_quit = false
-	_open_web_app()
+	if OS.has_feature("editor"):
+		# Launched from the editor (F5): keep the server and tray, but don't
+		# hijack the default browser on every test run.
+		print("TrayLauncher: editor run — web app available at ", _url)
+	else:
+		_open_web_app()
 	_run_startup_banner()
 
 

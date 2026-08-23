@@ -1,26 +1,33 @@
 extends PanelContainer
-## Top bar filtering trades by activity date: preset chips plus custom
-## From/To dates. Emits range_changed(min_ts, max_ts); a bound of 0 means
-## unbounded (defaults to all time).
+## Top bar filtering trades by activity date: preset chips, custom From/To
+## dates, and a dual-grip histogram timeline of trade activity. Emits
+## range_changed(min_ts, max_ts); a bound of 0 means unbounded (all time).
 
 signal range_changed(min_ts: int, max_ts: int)
 
 const DAY := 86400
 const PRESETS := ["All", "7D", "30D", "90D", "YTD", "1Y"]
+const HistogramScript := preload("res://scripts/ui/time_histogram.gd")
 
 var _from_edit: LineEdit
 var _to_edit: LineEdit
 var _chips := {}
 var _chip_group := ButtonGroup.new()
+var _histogram: Control
 var _min_ts := 0
 var _max_ts := 0
 
 
 func _ready() -> void:
 	add_theme_stylebox_override("panel", Utils.panel_style())
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 4)
+	add_child(vbox)
+
 	var hbox := HBoxContainer.new()
 	hbox.add_theme_constant_override("separation", 6)
-	add_child(hbox)
+	vbox.add_child(hbox)
 
 	for preset in PRESETS:
 		var chip := Button.new()
@@ -41,17 +48,26 @@ func _ready() -> void:
 	hbox.add_child(_from_edit)
 
 	hbox.add_child(_caption("to"))
-	_to_edit = _make_date_edit()
+	_to_edit = _make_date_edit("Now")
 	hbox.add_child(_to_edit)
 
 	var reset_btn := Button.new()
 	reset_btn.text = "Reset"
 	reset_btn.focus_mode = Control.FOCUS_NONE
-	reset_btn.add_theme_font_size_override("font_size", 12)
+	reset_btn.add_theme_font_size_override("font_size", 11)
 	reset_btn.pressed.connect(reset)
 	hbox.add_child(reset_btn)
 
-	# Deferred so the shell has connected before the initial emission.
+	_histogram = HistogramScript.new()
+	_histogram.custom_minimum_size = Vector2(0, 54)
+	_histogram.visible = false
+	_histogram.range_changed.connect(_on_histogram_range)
+	vbox.add_child(_histogram)
+
+	TradeManager.trades_changed.connect(_on_trades_changed)
+	# Deferred so the shell has connected before the initial emission, and so
+	# the histogram picks up the journal loaded by the autoloads.
+	_on_trades_changed.call_deferred()
 	_emit_range.call_deferred(0, 0)
 
 
@@ -86,6 +102,10 @@ func _on_preset(preset: String) -> void:
 	_max_ts = 0
 	_from_edit.text = Utils.date_str(_min_ts) if _min_ts > 0 else ""
 	_to_edit.text = ""
+	if _min_ts == 0:
+		_histogram.clear_selection()
+	else:
+		_histogram.set_selection(_min_ts, _max_ts)
 	_emit_range(_min_ts, _max_ts)
 
 
@@ -108,7 +128,27 @@ func _on_dates_edited(_text := "") -> void:
 	_deselect_chips()
 	_min_ts = from_ts
 	_max_ts = to_ts
+	if _histogram.has_domain():
+		if from_ts == 0 and to_ts == 0:
+			_histogram.clear_selection()
+		else:
+			_histogram.set_selection(from_ts, to_ts)
 	_emit_range(_min_ts, _max_ts)
+
+
+func _on_histogram_range(min_ts: int, max_ts: int) -> void:
+	_deselect_chips()
+	_min_ts = min_ts
+	_max_ts = max_ts
+	_from_edit.text = Utils.date_str(min_ts)
+	_to_edit.text = Utils.date_str(max_ts)
+	_style_edit(_from_edit, true)
+	_style_edit(_to_edit, true)
+	_emit_range(_min_ts, _max_ts)
+
+
+func _on_trades_changed() -> void:
+	_histogram.set_trades(TradeManager.trades)
 
 
 func _emit_range(min_ts: int, max_ts: int) -> void:
@@ -127,9 +167,9 @@ func _deselect_chips() -> void:
 		_chips[key].button_pressed = false
 
 
-func _make_date_edit() -> LineEdit:
+func _make_date_edit(placeholder := "YYYY-MM-DD") -> LineEdit:
 	var edit := LineEdit.new()
-	edit.placeholder_text = "YYYY-MM-DD"
+	edit.placeholder_text = placeholder
 	edit.custom_minimum_size = Vector2(104, 0)
 	edit.clear_button_enabled = true
 	edit.focus_mode = Control.FOCUS_CLICK

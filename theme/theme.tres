@@ -1,5 +1,7 @@
 [gd_resource type="Theme" format=3 uid="uid://piqiqtee2jd7"]
 
+[ext_resource type="StyleBox" uid="uid://cobtykmfw6pxf" path="res://theme/dialog_style.tres" id="1_8ab6e"]
+
 [sub_resource type="StyleBoxFlat" id="sb_btn_disabled"]
 content_margin_left = 14.0
 content_margin_top = 7.0
@@ -346,3 +348,7 @@ VScrollBar/styles/grabber_highlight = SubResource("sb_scroll_grabber_hl")
 VScrollBar/styles/grabber_pressed = SubResource("sb_scroll_grabber_hl")
 VScrollBar/styles/scroll = SubResource("sb_scroll_bg")
 VSeparator/styles/separator = SubResource("sb_separator")
+Window/colors/title_color = Color(0.901961, 0.929412, 0.952941, 1)
+Window/constants/title_height = 40
+Window/styles/embedded_border = ExtResource("1_8ab6e")
+Window/styles/embedded_unfocused_border = ExtResource("1_8ab6e")

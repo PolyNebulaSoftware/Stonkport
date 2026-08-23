@@ -1,35 +1,31 @@
 extends Control
 ## Trades screen: state filter chips, asset search, a square add-trade button
-## pinned top-right, and the journal list sorted by latest activity.
+## pinned top-right, and the journal rendered as a GridContainer so the
+## header and every row share exact column alignment.
 
 const TradeDialogScene := preload("res://scenes/dialogs/trade_dialog.tscn")
 
-## Column layout shared by the header row and every trade row.
+## Column layout shared by the header and every trade row.
 const COLS := [
 	{"ratio": 1.5, "align": HORIZONTAL_ALIGNMENT_LEFT},
 	{"ratio": 0.45, "align": HORIZONTAL_ALIGNMENT_CENTER},
 	{"ratio": 1.05, "align": HORIZONTAL_ALIGNMENT_RIGHT},
-	{"ratio": 0.65, "align": HORIZONTAL_ALIGNMENT_RIGHT},
+	{"ratio": 1.1, "align": HORIZONTAL_ALIGNMENT_RIGHT},
 	{"ratio": 0.85, "align": HORIZONTAL_ALIGNMENT_CENTER},
-	{"ratio": 0.95, "align": HORIZONTAL_ALIGNMENT_CENTER},
-	{"ratio": 0.95, "align": HORIZONTAL_ALIGNMENT_CENTER},
-	{"ratio": 0.7, "align": HORIZONTAL_ALIGNMENT_RIGHT},
-	{"ratio": 1.25, "align": HORIZONTAL_ALIGNMENT_RIGHT},
+	{"ratio": 0.75, "align": HORIZONTAL_ALIGNMENT_RIGHT},
+	{"ratio": 1.3, "align": HORIZONTAL_ALIGNMENT_RIGHT},
 ]
-const HEADERS := ["ASSET", "DIR", "QTY @ ENTRY", "FEES", "STATE", "OPENED", "CLOSED", "HOLD", "P/L"]
+const HEADERS := ["ASSET", "DIR", "QTY @ ENTRY", "POSITION", "STATE", "HOLD", "P/L"]
 
 ## Column indices that collapse first when the workspace narrows.
-const COLS_FEES := 3
-const COLS_OPENED := 5
-const COLS_CLOSED := 6
-const COLS_HOLD := 7
+const COLS_POSITION := 3
+const COLS_HOLD := 5
 
 var _min_ts := 0
 var _max_ts := 0
 var _state_filter := "all"  # all | open | closed
 var _search := ""
-var _list_box: VBoxContainer
-var _header_row: HBoxContainer
+var _grid: GridContainer
 var _empty: Label
 var _dialog: AcceptDialog
 var _vp_width := 0.0
@@ -53,17 +49,18 @@ func _ready() -> void:
 	_vp_width = get_viewport().get_visible_rect().size.x
 
 	vbox.add_child(_build_toolbar())
-	vbox.add_child(_build_header())
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	vbox.add_child(scroll)
 
-	_list_box = VBoxContainer.new()
-	_list_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_list_box.add_theme_constant_override("separation", 2)
-	scroll.add_child(_list_box)
+	_grid = GridContainer.new()
+	_grid.columns = COLS.size()
+	_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_grid.add_theme_constant_override("h_separation", 10)
+	_grid.add_theme_constant_override("v_separation", 2)
+	scroll.add_child(_grid)
 
 	_empty = Label.new()
 	_empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -125,60 +122,18 @@ func _build_toolbar() -> Control:
 	return bar
 
 
-func _build_header() -> Control:
-	_header_row = HBoxContainer.new()
-	_header_row.add_theme_constant_override("separation", 8)
-	_fill_header()
-	return _header_row
-
-
-func _fill_header() -> void:
-	for child in _header_row.get_children():
-		child.queue_free()
-	for i in COLS.size():
-		if not _col_visible(i):
-			continue
-		var label := Label.new()
-		label.text = HEADERS[i]
-		label.horizontal_alignment = COLS[i].align
-		label.add_theme_color_override("font_color", Utils.MUTED)
-		label.add_theme_font_size_override("font_size", 10)
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		label.size_flags_stretch_ratio = COLS[i].ratio
-		_header_row.add_child(label)
-
-
-## Secondary columns drop out as the workspace narrows.
-func _col_visible(index: int) -> bool:
-	match index:
-		COLS_FEES:
-			return _vp_width >= 950.0
-		COLS_HOLD:
-			return _vp_width >= 870.0
-		COLS_CLOSED:
-			return _vp_width >= 800.0
-		COLS_OPENED:
-			return _vp_width >= 730.0
-		_:
-			return true
-
-
-func _on_viewport_resized() -> void:
-	_vp_width = get_viewport().get_visible_rect().size.x
-	_fill_header()
-	_refresh()
-
-
 func _on_state_chip(filter: String) -> void:
 	_state_filter = filter
 	_refresh()
 
 
 func _refresh() -> void:
-	if _list_box == null:
+	if _grid == null:
 		return
-	for child in _list_box.get_children():
+	for child in _grid.get_children():
 		child.queue_free()
+
+	_fill_header()
 
 	var query := _search.strip_edges().to_upper()
 	var rows: Array = []
@@ -191,7 +146,7 @@ func _refresh() -> void:
 	rows.sort_custom(func(a, b): return TradeMetrics.last_activity(a) > TradeMetrics.last_activity(b))
 
 	for t in rows:
-		_list_box.add_child(_make_row(t))
+		_append_row(t)
 
 	var has_trades := not TradeManager.trades.is_empty()
 	_empty.text = "No trades yet - press + to log your first trade." if not has_trades \
@@ -199,74 +154,86 @@ func _refresh() -> void:
 	_empty.visible = rows.is_empty()
 
 
-func _make_row(trade: Dictionary) -> Control:
+func _fill_header() -> void:
+	for i in COLS.size():
+		var label := Label.new()
+		label.text = HEADERS[i]
+		label.horizontal_alignment = COLS[i].align
+		label.add_theme_color_override("font_color", Utils.MUTED)
+		label.add_theme_font_size_override("font_size", 10)
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_grid.add_child(label)
+
+
+## Secondary columns drop out as the workspace narrows.
+func _col_visible(index: int) -> bool:
+	match index:
+		COLS_POSITION:
+			return _vp_width >= 820.0
+		COLS_HOLD:
+			return _vp_width >= 720.0
+		_:
+			return true
+
+
+func _on_viewport_resized() -> void:
+	_vp_width = get_viewport().get_visible_rect().size.x
+	_refresh()
+
+
+func _append_row(trade: Dictionary) -> void:
 	var bd := TradeMetrics.breakdown(trade, _price_provider)
 	var now := int(Time.get_unix_time_from_system())
-
-	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(0, 34)
-	btn.focus_mode = Control.FOCUS_NONE
-	btn.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
-	btn.add_theme_stylebox_override("hover", Utils.flat_style(Color(0.114, 0.129, 0.161), Utils.BORDER, 6, 6, 2))
-	btn.add_theme_stylebox_override("pressed", Utils.flat_style(Color(0.13, 0.15, 0.19), Utils.BORDER, 6, 6, 2))
-	btn.pressed.connect(_open_edit.bind(str(trade.get("id", ""))))
-
-	var row := HBoxContainer.new()
-	row.set_anchors_preset(Control.PRESET_FULL_RECT)
-	row.offset_left = 6
-	row.offset_right = -6
-	row.add_theme_constant_override("separation", 8)
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	btn.add_child(row)
+	var id := str(trade.get("id", ""))
 
 	# Asset + type badge
 	var asset_cell := HBoxContainer.new()
 	asset_cell.alignment = BoxContainer.ALIGNMENT_BEGIN
 	asset_cell.add_theme_constant_override("separation", 6)
-	asset_cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var name_label := Label.new()
 	name_label.text = str(trade.get("asset", "?"))
 	name_label.add_theme_font_size_override("font_size", 13)
 	name_label.add_theme_color_override("font_color", Utils.TEXT)
+	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	asset_cell.add_child(name_label)
 	asset_cell.add_child(_badge(_type_tag(str(trade.get("asset_type", "stock"))), _type_color(trade)))
-	_add_cell(row, asset_cell, 0)
+	_add_cell(asset_cell, 0, id)
 
 	var dir_label := Label.new()
 	dir_label.text = "L" if str(trade.get("direction", "long")) == "long" else "S"
 	dir_label.add_theme_color_override("font_color", Utils.ACCENT if dir_label.text == "L" else Utils.ORANGE)
-	_add_cell(row, dir_label, 1)
+	_add_cell(dir_label, 1, id)
 
-	_add_cell(row, _cell_label("%s @ %s" % [Utils.qty(float(bd.entry_qty)), Utils.money(float(bd.avg_entry))]), 2)
-	_add_cell(row, _cell_label(Utils.money(float(bd.fees)), Utils.MUTED), 3)
+	_add_cell(_cell_label("%s @ %s" % [Utils.qty(float(bd.entry_qty)), Utils.money(float(bd.avg_entry))]), 2, id)
 
 	var open_state := str(trade.get("state", "open")) == "open"
-	_add_cell(row, _badge("OPEN" if open_state else "CLOSED",
-			Utils.GREEN if open_state else Utils.MUTED), 4)
 
-	_add_cell(row, _cell_label(Utils.date_str(int(trade.get("opened_at", 0))), Utils.MUTED), 5)
+	# Current market value of the remaining position; closed trades have none.
+	var pos_text := "-"
+	if open_state:
+		pos_text = Utils.money(float(bd.net_qty) * float(bd.mark))
+	_add_cell(_cell_label(pos_text, Utils.TEXT if open_state else Utils.MUTED), 3, id)
+
+	_add_cell(_badge("OPEN" if open_state else "CLOSED",
+			Utils.GREEN if open_state else Utils.MUTED), 4, id)
+
 	var closed_at := int(trade.get("closed_at", 0))
-	_add_cell(row, _cell_label(Utils.date_str(closed_at) if closed_at > 0 else "-", Utils.MUTED), 6)
-
 	var hold := 0.0
 	if open_state:
 		hold = float(now - int(trade.get("opened_at", 0)))
 	else:
 		hold = float(closed_at - int(trade.get("opened_at", 0)))
-	_add_cell(row, _cell_label(Utils.duration(hold)), 7)
+	_add_cell(_cell_label(Utils.duration(hold)), 5, id)
 
-	var pnl_label := _cell_label("%s (%s)" % [Utils.money(float(bd.pnl), true), Utils.pct(float(bd.pnl_pct))],
-			Utils.change_color(float(bd.pnl)))
-	_add_cell(row, pnl_label, 8)
-	return btn
+	_add_cell(_cell_label("%s (%s)" % [Utils.money(float(bd.pnl), true), Utils.pct(float(bd.pnl_pct))],
+			Utils.change_color(float(bd.pnl))), 6, id)
 
 
-func _add_cell(row: Control, content: Control, index: int) -> void:
+func _add_cell(content: Control, index: int, trade_id := "") -> void:
 	if not _col_visible(index):
 		content.queue_free()
 		return
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content.size_flags_stretch_ratio = COLS[index].ratio
 	if content is Label:
 		content.horizontal_alignment = COLS[index].align
 	elif content is HBoxContainer:
@@ -275,7 +242,16 @@ func _add_cell(row: Control, content: Control, index: int) -> void:
 				content.alignment = BoxContainer.ALIGNMENT_CENTER
 			HORIZONTAL_ALIGNMENT_RIGHT:
 				content.alignment = BoxContainer.ALIGNMENT_END
-	row.add_child(content)
+	content.mouse_filter = Control.MOUSE_FILTER_STOP
+	if trade_id != "":
+		content.gui_input.connect(_on_cell_input.bind(trade_id))
+	_grid.add_child(content)
+
+
+func _on_cell_input(event: InputEvent, trade_id: String) -> void:
+	if event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_LEFT:
+		_open_edit(trade_id)
 
 
 func _cell_label(text: String, color := Utils.TEXT) -> Label:
