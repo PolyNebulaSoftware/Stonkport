@@ -14,6 +14,9 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+env:
+  GODOT_VERSION: "4.7.2"
+
 jobs:
   deploy:
     name: Export & Deploy
@@ -28,6 +31,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Align export templates with runtime HOME
+        run: |
+          # The image preinstalls templates under /root, but GitHub Actions
+          # containers run with HOME=/github/home, so Godot looks elsewhere.
+          SRC=$(find /root /usr/local /opt -maxdepth 6 -type d \
+            -name "${GODOT_VERSION}.stable" -path "*export_templates*" 2>/dev/null | head -n1)
+          echo "template source: ${SRC:-<not found>}"
+          if [ -z "$SRC" ]; then echo "No export templates in image"; exit 1; fi
+          mkdir -p "$HOME/.local/share/godot/export_templates"
+          cp -r "$SRC" "$HOME/.local/share/godot/export_templates/"
+          ls "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable" | head
 
       - name: Import assets (fresh checkout)
         run: godot --headless --path . --import
