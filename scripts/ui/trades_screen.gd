@@ -237,7 +237,7 @@ func _make_row(trade: Dictionary) -> Control:
 	dir_label.add_theme_color_override("font_color", Utils.ACCENT if dir_label.text == "L" else Utils.ORANGE)
 	_add_cell(row, dir_label, 1)
 
-	_add_cell(row, _cell_label("%s @ %.2f" % [Utils.qty(float(bd.entry_qty)), float(bd.avg_entry)]), 2)
+	_add_cell(row, _cell_label("%s @ %s" % [Utils.qty(float(bd.entry_qty)), Utils.money(float(bd.avg_entry))]), 2)
 	_add_cell(row, _cell_label(Utils.money(float(bd.fees)), Utils.MUTED), 3)
 
 	var open_state := str(trade.get("state", "open")) == "open"
@@ -301,6 +301,7 @@ func _type_tag(asset_type: String) -> String:
 		"stock": "STOCK",
 		"crypto": "CRYPTO",
 		"custom": "CUSTOM",
+		"option": "OPTION",
 	}.get(asset_type, "STOCK")
 
 
@@ -308,8 +309,10 @@ func _type_color(trade: Dictionary) -> Color:
 	match str(trade.get("asset_type", "stock")):
 		"crypto":
 			return Utils.ORANGE
-		"custom":
+		"option":
 			return Utils.PURPLE
+		"custom":
+			return Utils.MUTED
 		_:
 			return Utils.ACCENT
 

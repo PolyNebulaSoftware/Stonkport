@@ -15,7 +15,7 @@ const LEGACY_LS_KEY := "stonkport_portfolio_v1"
 const ACTIONS := ["open", "add", "reduce", "close"]
 const ENTRY_ACTIONS := ["open", "add"]
 const EXIT_ACTIONS := ["reduce", "close"]
-const ASSET_TYPES := ["stock", "crypto", "custom"]
+const ASSET_TYPES := ["stock", "crypto", "custom", "option"]
 const EPSILON := 0.0000001
 
 var trades: Array = []
@@ -191,16 +191,17 @@ func import_trades(list: Array, replace := false) -> Dictionary:
 	if replace:
 		trades = []
 	for t in list:
+		# Derive state/dates from logs first so validation sees them.
+		_refresh_state(t)
 		var id := str(t.get("id", ""))
 		if not id.is_empty() and not get_trade(id).is_empty():
 			skipped += 1
 			continue
-		if str(t.get("asset", "")).is_empty() or float(t.get("opened_at", 0)) <= 0:
+		if str(t.get("asset", "")).is_empty() or int(t.get("opened_at", 0)) <= 0:
 			skipped += 1
 			continue
 		if id.is_empty():
 			t["id"] = _new_id()
-		_refresh_state(t)
 		trades.append(t)
 		imported += 1
 	if imported > 0:

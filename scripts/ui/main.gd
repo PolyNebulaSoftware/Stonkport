@@ -51,7 +51,6 @@ func _ready() -> void:
 	_select("dashboard")
 
 
-
 func _select(id: String) -> void:
 	_current = id
 	for key in _screens:

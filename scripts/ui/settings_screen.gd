@@ -3,6 +3,18 @@ extends Control
 
 const CSV_HEADER := "id,asset,asset_type,direction,state,opened_at,closed_at,quantity,entry_price,exit_price,fees,pnl,pnl_pct,notes"
 
+## Loaded as a resource so constants are reachable without the autoload
+## instance (keeps the parser testable headless).
+const TradeManagerScript := preload("res://scripts/autoload/trade_manager.gd")
+
+## Optional CSV import formats. Each entry provides FORMAT_NAME, can_parse()
+## and parse(); add or remove entries (and their script files) freely — the
+## default Stonkport importer below is unaffected.
+const IMPORTERS := [
+	preload("res://scripts/trades/importers/sj_importer.gd"),
+]
+
+var _last_format := "Stonkport"
 var _codes: Array = []
 var _currency: OptionButton
 var _status: Label
@@ -251,11 +263,16 @@ func _parse_csv(text: String) -> Array:
 	var header_idx := -1
 	for i in lines.size():
 		var lower := str(lines[i]).to_lower()
-		if lower.contains("asset") and lower.contains(","):
+		if lower.contains(",") and (lower.contains("asset") or lower.contains("symbol")):
 			header_idx = i
 			break
 	if header_idx == -1:
 		return out
+	for importer in IMPORTERS:
+		if importer.can_parse(str(lines[header_idx])):
+			_last_format = importer.FORMAT_NAME
+			return importer.parse(lines, header_idx, TradeManagerScript.ASSET_TYPES)
+	_last_format = "Stonkport"
 	var headers := Utils.csv_split(str(lines[header_idx]))
 	for i in range(header_idx + 1, lines.size()):
 		if str(lines[i]).strip_edges().is_empty():
@@ -291,7 +308,7 @@ func _trade_from_row(row: Dictionary) -> Dictionary:
 	return {
 		"id": str(row.get("id", "")),
 		"asset": asset,
-		"asset_type": asset_type if TradeManager.ASSET_TYPES.has(asset_type) else "stock",
+		"asset_type": asset_type if TradeManagerScript.ASSET_TYPES.has(asset_type) else "stock",
 		"direction": direction if direction in ["long", "short"] else "long",
 		"state": "open",
 		"opened_at": 0,
@@ -303,7 +320,8 @@ func _trade_from_row(row: Dictionary) -> Dictionary:
 
 func _apply_import(list: Array) -> void:
 	var result := TradeManager.import_trades(list)
-	_set_status("Imported %d trade(s), skipped %d." % [int(result.imported), int(result.skipped)],
+	_set_status("Imported %d trade(s) from %s CSV, skipped %d." % [
+			int(result.imported), _last_format, int(result.skipped)],
 			int(result.imported) > 0)
 
 

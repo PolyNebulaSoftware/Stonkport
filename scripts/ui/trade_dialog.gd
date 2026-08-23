@@ -2,7 +2,7 @@ extends AcceptDialog
 ## Create/edit trade dialog. Create mode collects the opening log; edit mode
 ## manages metadata plus the full log list (add/reduce/close entries).
 
-const TYPE_NAMES := ["stock", "crypto", "custom"]
+const TYPE_NAMES := ["stock", "crypto", "custom", "option"]
 const DIR_NAMES := ["long", "short"]
 const LOG_ACTIONS := ["add", "reduce", "close"]
 
@@ -57,7 +57,7 @@ func _build_create_box() -> Control:
 	_form_row(_create_box, "Asset", _f.asset, 180)
 
 	_f.type = OptionButton.new()
-	for item in ["Stock", "Crypto", "Custom"]:
+	for item in ["Stock", "Crypto", "Custom", "Option"]:
 		_f.type.add_item(item)
 	_form_row(_create_box, "Type", _f.type, 180)
 
@@ -66,7 +66,7 @@ func _build_create_box() -> Control:
 	_f.dir.add_item("Short")
 	_form_row(_create_box, "Direction", _f.dir, 180)
 
-	_f.qty = _spin(0.0, 1000000000.0, 0.01)
+	_f.qty = _spin(0.0, 1000000000.0, 0.00000001)
 	_form_row(_create_box, "Quantity", _f.qty, 140)
 
 	_f.price = _spin(0.0, 10000000.0, 0.01)
@@ -121,7 +121,7 @@ func _build_edit_box() -> Control:
 	_form_row(_edit_box, "Asset", _m.asset, 180)
 
 	_m.type = OptionButton.new()
-	for item in ["Stock", "Crypto", "Custom"]:
+	for item in ["Stock", "Crypto", "Custom", "Option"]:
 		_m.type.add_item(item)
 	_form_row(_edit_box, "Type", _m.type, 180)
 
@@ -181,7 +181,7 @@ func _build_log_form() -> void:
 	_log_form.action.item_selected.connect(func(_i: int): _prefill_exit())
 	form.add_child(_log_form.action)
 
-	_log_form.qty = _spin(0.0, 1000000000.0, 0.01)
+	_log_form.qty = _spin(0.0, 1000000000.0, 0.00000001)
 	_log_form.qty.custom_minimum_size = Vector2(84, 0)
 	form.add_child(_log_form.qty)
 
@@ -302,7 +302,7 @@ func _make_log_row(index: int, log: Dictionary) -> Control:
 	row.add_child(date_label)
 
 	var main := Label.new()
-	main.text = "%s @ %.2f" % [Utils.qty(float(log.get("qty", 0.0))), float(log.get("price", 0.0))]
+	main.text = "%s @ %s" % [Utils.qty(float(log.get("qty", 0.0))), Utils.money(float(log.get("price", 0.0)))]
 	main.add_theme_font_size_override("font_size", 12)
 	row.add_child(main)
 

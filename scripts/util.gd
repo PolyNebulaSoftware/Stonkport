@@ -64,9 +64,10 @@ static func change_color(value: float) -> Color:
 	return MUTED
 
 
-## Trims trailing zeros for quantity display: 15.0 → "15", 0.50 → "0.5".
+## Trims trailing zeros for quantity display (up to 8 decimals, e.g. BTC):
+## 15.0 → "15", 0.50 → "0.5", 0.0001 → "0.0001".
 static func qty(value: float) -> String:
-	var text := "%.4f" % value
+	var text := "%.8f" % value
 	while text.ends_with("0"):
 		text = text.substr(0, text.length() - 1)
 	return text.rstrip(".")
@@ -130,6 +131,42 @@ static func parse_date(text: String, end_of_day := false) -> int:
 			or int(back.hour) != hh or int(back.minute) != mm:
 		return -1
 	return ts
+
+
+## Parses "DD/MM/YYYY" plus optional "HH:MM" (24h) into unix seconds.
+## Two-digit years are treated as 2000+. Returns -1 on invalid input.
+static func parse_date_sj(date_text: String, time_text := "") -> int:
+	var parts := date_text.strip_edges().split("/")
+	if parts.size() != 3:
+		return -1
+	var day := int(parts[0])
+	var month := int(parts[1])
+	var year := int(parts[2])
+	if year < 100:
+		year += 2000
+	if year < 1970 or month < 1 or month > 12 or day < 1 or day > 31:
+		return -1
+	var hh := 0
+	var mm := 0
+	var clock := time_text.strip_edges().split(":")
+	if clock.size() >= 1 and not clock[0].is_empty():
+		hh = clampi(int(clock[0]), 0, 23)
+		mm = clampi(int(clock[1]) if clock.size() > 1 else 0, 0, 59)
+	var dt := {"year": year, "month": month, "day": day, "hour": hh, "minute": mm, "second": 0}
+	var ts := int(Time.get_unix_time_from_datetime_dict(dt))
+	var back := Time.get_datetime_dict_from_unix_time(ts)
+	if int(back.year) != year or int(back.month) != month or int(back.day) != day:
+		return -1
+	return ts
+
+
+## Parses currency-flavored numbers: "$1,234.56", "-$15.47", "2,305.95%".
+## "-", "" and other blanks yield 0.0.
+static func parse_money(text: String) -> float:
+	var t := text.strip_edges().replace("$", "").replace(",", "").replace("%", "").replace(" ", "")
+	if t.is_empty() or t == "-":
+		return 0.0
+	return t.to_float()
 
 
 ## Escapes a single field for RFC-4180 CSV output.

@@ -1,7 +1,11 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://cqc6vujxrrrpc"]
 
-[ext_resource type="Script" path="res://scripts/ui/trade_dialog.gd" id="1"]
+[ext_resource type="Script" uid="uid://trf2f1vjvhkc" path="res://scripts/ui/trade_dialog.gd" id="1"]
 
-[node name="TradeDialog" type="AcceptDialog"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_o5qli"]
+bg_color = Color(0.066, 0.0792, 0.11, 1)
+
+[node name="TradeDialog" type="AcceptDialog" unique_id=1299087902]
 title = "New Trade"
+theme_override_styles/panel = SubResource("StyleBoxFlat_o5qli")
 script = ExtResource("1")

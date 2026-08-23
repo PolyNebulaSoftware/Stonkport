@@ -15,7 +15,9 @@ config/description="Client-side trade journal rendered entirely with Godot UI."
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 boot_splash/bg_color=Color(0.0509804, 0.0666667, 0.0901961, 1)
+boot_splash/show_image=false
 config/icon="res://icon.svg"
+config/features/Packed/disable_splash_screen=true
 
 [autoload]
 
@@ -27,11 +29,7 @@ TrayLauncher="*res://scripts/tray/tray_launcher.gd"
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
-window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
-; NOTE: keep HiDPI off — on Web it sizes the canvas backing store by
-; devicePixelRatio while the stretch system works in CSS pixels, which
-; double-scales the UI beyond the canvas bounds.
 
 [gui]
 
@@ -39,18 +37,10 @@ theme/custom="res://theme/theme.tres"
 
 [internationalization]
 
-; Force the fallback text driver (English-only UI; no RTL/complex scripts,
-; ligatures or OpenType features) instead of the advanced ICU server — matches
-; minified templates built with module_text_server_adv_enabled=no.
 rendering/text_driver="Fallback"
 
 [rendering]
 
-; Window background matches the app panel palette (Utils.BG / #0d1117).
-environment/defaults/default_clear_color=Color(0.0509804, 0.0666667, 0.0901961, 1)
-; Compatibility renderer only (OpenGL) — keeps exports free of Vulkan code.
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
-; Pure 2D UI needs no GPU-compressed textures; skip transcoding them into the .pck.
-textures/vram_compression/import_s3tc_bptc=false
-textures/vram_compression/import_etc2_astc=false
+environment/defaults/default_clear_color=Color(0.0509804, 0.0666667, 0.0901961, 1)
