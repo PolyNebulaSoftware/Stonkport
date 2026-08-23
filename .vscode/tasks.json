@@ -1,0 +1,55 @@
+{
+	// See https://go.microsoft.com/fwlink/?LinkId=733558
+	// for the documentation about the tasks.json format
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Export: Web (web_dist/)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\tools\\export_presets.cmd",
+			"args": ["web"],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "Export: Windows Exe (build/windows/)",
+			"type": "shell",
+			"command": "${workspaceFolder}\\tools\\export_presets.cmd",
+			"args": ["windows"],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "Export: All Presets",
+			"type": "shell",
+			"command": "${workspaceFolder}\\tools\\export_presets.cmd",
+			"args": ["all"],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Godot: Open Editor",
+			"type": "shell",
+			"command": "${workspaceFolder}\\tools\\open_editor.cmd",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"reveal": "silent"
+			},
+			"problemMatcher": []
+		}
+	]
+}

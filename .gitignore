@@ -4,6 +4,7 @@
 
 # Export output
 build/
+web_dist/
 
 # System
 .DS_Store

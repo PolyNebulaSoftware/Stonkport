@@ -30,7 +30,20 @@ python -m http.server 8080
 # open http://localhost:8080
 ```
 
+VS Code: **Terminal → Run Task…** offers `Export: Web`, `Export: Windows Exe`, `Export: All Presets` (the default build task), and `Godot: Open Editor` — see [`.vscode/tasks.json`](.vscode/tasks.json); they wrap [`tools/export_presets.cmd`](tools/export_presets.cmd) and [`tools/open_editor.cmd`](tools/open_editor.cmd).
+
 WASM requires correct MIME types, so serve over HTTP rather than `file://`. The export uses a custom HTML shell (`web/index.html`) with a loading bar; thread support is disabled so no COOP/COEP headers are needed.
+
+## Windows launcher (tray)
+
+The same project also exports a Windows exe that lives in the system tray and serves the web build locally:
+
+```sh
+godot --headless --path . --export-release "Web" web_dist/index.html            # build the web assets first
+godot --headless --path . --export-release "Windows Exe" build/windows/LocalStoport.exe
+```
+
+Run `LocalStoport.exe` and it minimizes straight to the tray via the built-in `StatusIndicator` node. Left-click the tray icon to serve `web_dist/` from a tiny built-in HTTP server on `127.0.0.1:17400` and open it in your default browser — fully offline, no Python needed. Right-click for **Open Web App / Show Window / Quit**; closing the window hides to tray instead of quitting. Launching a second copy just reveals the running one in the browser and exits. The web build is packed into the exe (`embed_pck`), but a `web_dist/` folder next to the exe takes precedence if present.
 
 ## Verify persistence
 
@@ -40,7 +53,7 @@ Add/edit/remove positions in the browser, then refresh the page — the portfoli
 
 ```
 project.godot                  # autoloads, stretch settings, gl_compatibility
-export_presets.cfg             # "Web" HTML5 preset
+export_presets.cfg             # "Web" + "Windows Exe" presets
 data/stocks.json               # stock universe (ticker, name, sector, base price, volatility)
 scenes/                        # main shell, screens, dialogs (UI built in code)
 scripts/
@@ -50,6 +63,7 @@ scripts/
 ├── chart/
 │   ├── candlestick_chart.gd   # custom _draw() candles/volume/crosshair/tooltip
 │   └── donut_chart.gd         # custom _draw() allocation donut
+├── tray/                      # Windows launcher: StatusIndicator tray icon + localhost web server
 ├── ui/                        # screen + dialog scripts
 └── util.gd                    # money/pct formatting, palette constants
 theme/theme.tres               # dark theme (GitHub-dark inspired)

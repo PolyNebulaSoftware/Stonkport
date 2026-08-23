@@ -15,7 +15,7 @@ A single-page stock portfolio web app where **all UI is rendered by Godot 4.x's 
 
 | Item | Choice | Notes |
 |---|---|---|
-| Engine | Godot 4.3+ (GDScript 2.0) | Installed at `Y:\OpenSource\godot\bin\godot.exe` (dev build also present). Verify exact version with `godot --version` before export. Web export only supports the **GL Compatibility** renderer |
+| Engine | Godot 4.3+ (GDScript 2.0) | Installed at `Z:\Godot\Godot_v4.7.2-stable_win64\Godot_v4.7.2-stable_win64_console.exe` (v4.7.2 stable). Verify exact version with `godot --version` before export. Web export only supports the **GL Compatibility** renderer |
 | UI | Godot Control nodes + custom `_draw()` | No HTML/CSS UI; Godot is the UI library |
 | Export | HTML5 preset → `index.html`, `app.wasm`, `app.pck` | Requires Godot export templates installed |
 | Data | `res://data/stocks.json` (embedded in pck) | Static stock universe |
