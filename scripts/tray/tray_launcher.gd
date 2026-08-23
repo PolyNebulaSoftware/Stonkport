@@ -1,9 +1,19 @@
 extends Node
 ## Tray launcher module (desktop builds only).
 ##
-## Minimizes Stonkport to the system tray via the built-in StatusIndicator
-## node, serves web_dist/ over localhost with a tiny HTTP server, and opens
-## the served web app in the default browser when the tray icon is clicked.
+## Serves web_dist/ over localhost with a tiny HTTP server, opens the served
+## web app in the default browser right away, and lives in the system tray via
+## the built-in StatusIndicator node. On startup the main window is restyled
+## into a borderless splash banner (icon + title) for a few seconds, then the
+## app drops to the tray.
+##
+## Godot 4.7 blocks hiding the main window through the Window API ("Can't
+## change visibility of main window"), so true hide/show is done by shelling
+## out to StonkportTrayHelper.exe (user32 ShowWindowAsync on our HWND — async
+## because the synchronous call deadlocks against OS.execute). When the
+## helper is missing, a plain engine minimize is used instead — functional,
+## but it keeps a taskbar button.
+##
 ## On the Web platform the module disables itself entirely.
 
 const WebServerScript := preload("res://scripts/tray/local_web_server.gd")
@@ -17,11 +27,21 @@ const MENU_SHOW_WINDOW := 1
 const MENU_QUIT := 2
 const OPEN_DEBOUNCE_MSEC := 1500
 
+const BANNER_DURATION_SEC := 3.0
+const BANNER_SIZE := Vector2i(420, 132)
+const BANNER_BG := Color(0.0509804, 0.0666667, 0.0901961)
+const BANNER_FG := Color(0.902, 0.929, 0.953)
+const HELPER_NAME := "StonkportTrayHelper.exe"
+const HELPER_SEARCH_SUBDIRS := ["", "build/windows"]
+
 var _indicator: StatusIndicator
 var _menu: PopupMenu
 var _server: Node
 var _url := ""
 var _last_open_msec := -OPEN_DEBOUNCE_MSEC
+var _banner: Control
+var _banner_active := false
+var _pre_banner_size := Vector2i.ZERO
 
 
 func _ready() -> void:
@@ -49,7 +69,8 @@ func _ready() -> void:
 	_build_tray_ui()
 	# Closing the window must hide to tray, not terminate the app.
 	get_tree().auto_accept_quit = false
-	_hide_window.call_deferred()
+	_open_web_app()
+	_run_startup_banner()
 
 
 ## Activate only on native desktop platforms. Whitelisting display servers
@@ -67,7 +88,9 @@ func _should_activate() -> bool:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
-		get_window().hide()
+		if _banner_active:
+			_end_banner_and_restore()
+		_hide_to_tray()
 
 
 func _build_tray_ui() -> void:
@@ -87,6 +110,73 @@ func _build_tray_ui() -> void:
 	# StatusIndicator.menu is a NodePath pointing at a PopupMenu in the tree.
 	_indicator.menu = _menu.get_path()
 	_indicator.pressed.connect(_on_indicator_pressed)
+
+
+## Show a small borderless banner window (icon + title) for a few seconds,
+## then restore the real UI and drop to the tray. The main window itself plays
+## the banner: Godot 4.7 will not let us hide it during this phase anyway.
+func _run_startup_banner() -> void:
+	await get_tree().process_frame  # current_scene enters the tree after autoloads
+	var win := get_window()
+	var scene := get_tree().current_scene
+	_pre_banner_size = win.size
+	_banner = _build_banner()
+	win.add_child(_banner)
+	if scene != null:
+		scene.visible = false  # free the window to shrink below the UI min size
+	_banner_active = true
+	win.borderless = true
+	win.always_on_top = true
+	win.size = BANNER_SIZE
+	win.move_to_center()
+	await get_tree().create_timer(BANNER_DURATION_SEC).timeout
+	if not _banner_active:
+		return  # closed early (Alt+F4); _notification already restored + hid us
+	_end_banner_and_restore()
+	_hide_to_tray()
+
+
+func _end_banner_and_restore() -> void:
+	_banner_active = false
+	if _banner != null:
+		_banner.queue_free()
+		_banner = null
+	var win := get_window()
+	var scene := get_tree().current_scene
+	if scene != null:
+		scene.visible = true
+	win.borderless = false
+	win.always_on_top = false
+	if _pre_banner_size != Vector2i.ZERO:
+		win.size = _pre_banner_size
+	win.move_to_center()
+
+
+func _build_banner() -> Control:
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var style := StyleBoxFlat.new()
+	style.bg_color = BANNER_BG
+	panel.add_theme_stylebox_override("panel", style)
+
+	var hbox := HBoxContainer.new()
+	hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	hbox.add_theme_constant_override("separation", 18)
+	panel.add_child(hbox)
+
+	var icon_rect := TextureRect.new()
+	icon_rect.texture = load("res://icon.svg")
+	icon_rect.custom_minimum_size = Vector2(72, 72)
+	icon_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	hbox.add_child(icon_rect)
+
+	var title := Label.new()
+	title.text = TOOLTIP_TEXT
+	title.add_theme_font_size_override("font_size", 36)
+	title.add_theme_color_override("font_color", BANNER_FG)
+	hbox.add_child(title)
+	return panel
 
 
 ## Prefer a web_dist/ folder shipped next to the executable so the web build
@@ -123,6 +213,42 @@ func _probe_existing_instance() -> bool:
 	return PackedByteArray(result[3]).get_string_from_ascii() == WebServerScript.LAUNCHER_PING_BODY
 
 
+## Locate StonkportTrayHelper.exe: next to the executable first (exported
+## builds), then build/windows/ inside the project for dev runs where the
+## executable lives in the editor installation.
+func _find_helper() -> String:
+	var exe_dir := OS.get_executable_path().get_base_dir()
+	var candidates := []
+	for rel in HELPER_SEARCH_SUBDIRS:
+		candidates.append(exe_dir.path_join(HELPER_NAME) if rel.is_empty() else exe_dir.path_join(rel).path_join(HELPER_NAME))
+	candidates.append(ProjectSettings.globalize_path("res://build/windows").path_join(HELPER_NAME))
+	for candidate in candidates:
+		if FileAccess.file_exists(candidate):
+			return candidate
+	return ""
+
+
+## Run a window command through the Win32 helper. Returns false when the
+## helper is unavailable or the operation failed.
+func _helper_window_cmd(cmd: String) -> bool:
+	var helper := _find_helper()
+	if helper.is_empty():
+		push_warning("TrayLauncher: %s not found — falling back to engine window handling." % HELPER_NAME)
+		return false
+	var hwnd := DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE)
+	var output := []
+	return OS.execute(helper, PackedStringArray([cmd, str(hwnd)]), output) == 0
+
+
+## Hide the main window so only the tray icon remains. Godot 4.7 forbids
+## hiding the main window via the Window API, hence the helper detour.
+func _hide_to_tray() -> void:
+	if _helper_window_cmd("hide"):
+		return
+	# Fallback: engine minimize stays functional but keeps a taskbar button.
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MINIMIZED)
+
+
 func _on_indicator_pressed(_position: Vector2i, button: MouseButton) -> void:
 	if button == MOUSE_BUTTON_LEFT:
 		_open_web_app()
@@ -148,16 +274,15 @@ func _open_web_app() -> void:
 
 
 func _show_window() -> void:
-	var win := get_window()
-	win.show()
-	win.move_to_foreground()
+	var restored := _helper_window_cmd("show")
+	if not restored:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+	# Foregrounding from Godot itself avoids any cross-thread messaging in
+	# the helper while our main thread is blocked inside OS.execute().
+	DisplayServer.window_move_to_foreground()
 
 
 func _quit() -> void:
 	if _server != null:
 		_server.stop()
 	get_tree().quit()
-
-
-func _hide_window() -> void:
-	get_window().hide()

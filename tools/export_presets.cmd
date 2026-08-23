@@ -24,6 +24,17 @@ echo [export] Web preset -^> web_dist/
 if /i not "%TARGET%"=="all" goto :done
 
 :windows
+echo [helper] Building StonkportTrayHelper.exe (tray hide/show)
+set "CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+if not exist "%CSC%" set "CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+if not exist "%CSC%" goto :no_csc
+if not exist "build\windows" mkdir "build\windows"
+"%CSC%" /nologo /target:winexe /out:"build\windows\StonkportTrayHelper.exe" tools\StonkportTrayHelper.cs || goto :fail
+goto :after_helper
+:no_csc
+echo [helper] WARNING: csc.exe not found - tray hide will fall back to minimize. >&2
+:after_helper
+
 echo [export] Windows Exe preset -^> build/windows/Stonkport.exe
 if not exist "build\windows" mkdir "build\windows"
 "%GODOT_EXE%" --headless --path . --export-release "Windows Exe" "build\windows\Stonkport.exe" || goto :fail
