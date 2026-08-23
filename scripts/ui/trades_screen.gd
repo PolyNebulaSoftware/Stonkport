@@ -1,0 +1,329 @@
+extends Control
+## Trades screen: state filter chips, asset search, a square add-trade button
+## pinned top-right, and the journal list sorted by latest activity.
+
+const TradeDialogScene := preload("res://scenes/dialogs/trade_dialog.tscn")
+
+## Column layout shared by the header row and every trade row.
+const COLS := [
+	{"ratio": 1.5, "align": HORIZONTAL_ALIGNMENT_LEFT},
+	{"ratio": 0.45, "align": HORIZONTAL_ALIGNMENT_CENTER},
+	{"ratio": 1.05, "align": HORIZONTAL_ALIGNMENT_RIGHT},
+	{"ratio": 0.65, "align": HORIZONTAL_ALIGNMENT_RIGHT},
+	{"ratio": 0.85, "align": HORIZONTAL_ALIGNMENT_CENTER},
+	{"ratio": 0.95, "align": HORIZONTAL_ALIGNMENT_CENTER},
+	{"ratio": 0.95, "align": HORIZONTAL_ALIGNMENT_CENTER},
+	{"ratio": 0.7, "align": HORIZONTAL_ALIGNMENT_RIGHT},
+	{"ratio": 1.25, "align": HORIZONTAL_ALIGNMENT_RIGHT},
+]
+const HEADERS := ["ASSET", "DIR", "QTY @ ENTRY", "FEES", "STATE", "OPENED", "CLOSED", "HOLD", "P/L"]
+
+## Column indices that collapse first when the workspace narrows.
+const COLS_FEES := 3
+const COLS_OPENED := 5
+const COLS_CLOSED := 6
+const COLS_HOLD := 7
+
+var _min_ts := 0
+var _max_ts := 0
+var _state_filter := "all"  # all | open | closed
+var _search := ""
+var _list_box: VBoxContainer
+var _header_row: HBoxContainer
+var _empty: Label
+var _dialog: AcceptDialog
+var _vp_width := 0.0
+
+var _price_provider := func(asset: String) -> float: return MarketSimulator.get_price(asset)
+
+
+func _ready() -> void:
+	set_anchors_preset(Control.PRESET_FULL_RECT)
+
+	var margin := MarginContainer.new()
+	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for side in ["margin_left", "margin_top", "margin_right", "margin_bottom"]:
+		margin.add_theme_constant_override(side, 4)
+	add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	margin.add_child(vbox)
+
+	_vp_width = get_viewport().get_visible_rect().size.x
+
+	vbox.add_child(_build_toolbar())
+	vbox.add_child(_build_header())
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	vbox.add_child(scroll)
+
+	_list_box = VBoxContainer.new()
+	_list_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_list_box.add_theme_constant_override("separation", 2)
+	scroll.add_child(_list_box)
+
+	_empty = Label.new()
+	_empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_empty.add_theme_color_override("font_color", Utils.MUTED)
+	_empty.visible = false
+	vbox.add_child(_empty)
+
+	get_viewport().size_changed.connect(_on_viewport_resized)
+	TradeManager.trades_changed.connect(_refresh)
+	MarketSimulator.market_ticked.connect(_refresh)
+	_refresh()
+
+
+func set_range(min_ts: int, max_ts: int) -> void:
+	_min_ts = min_ts
+	_max_ts = max_ts
+	_refresh()
+
+
+func _build_toolbar() -> Control:
+	var bar := HBoxContainer.new()
+	bar.add_theme_constant_override("separation", 6)
+
+	var group := ButtonGroup.new()
+	for chip_def in [["All", "all"], ["Open", "open"], ["Closed", "closed"]]:
+		var chip := Button.new()
+		chip.text = chip_def[0]
+		chip.toggle_mode = true
+		chip.button_group = group
+		chip.focus_mode = Control.FOCUS_NONE
+		chip.add_theme_font_size_override("font_size", 11)
+		if chip_def[1] == "all":
+			chip.button_pressed = true
+		chip.pressed.connect(_on_state_chip.bind(chip_def[1]))
+		bar.add_child(chip)
+
+	var search := LineEdit.new()
+	search.placeholder_text = "Search asset"
+	search.custom_minimum_size = Vector2(160, 0)
+	search.clear_button_enabled = true
+	search.text_changed.connect(func(text: String):
+		_search = text.strip_edges().to_upper()
+		_refresh())
+	bar.add_child(search)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_child(spacer)
+
+	var add_btn := Button.new()
+	add_btn.text = "+"
+	add_btn.tooltip_text = "New trade"
+	add_btn.focus_mode = Control.FOCUS_NONE
+	add_btn.custom_minimum_size = Vector2(30, 30)
+	add_btn.add_theme_font_size_override("font_size", 16)
+	add_btn.pressed.connect(_open_create)
+	bar.add_child(add_btn)
+	return bar
+
+
+func _build_header() -> Control:
+	_header_row = HBoxContainer.new()
+	_header_row.add_theme_constant_override("separation", 8)
+	_fill_header()
+	return _header_row
+
+
+func _fill_header() -> void:
+	for child in _header_row.get_children():
+		child.queue_free()
+	for i in COLS.size():
+		if not _col_visible(i):
+			continue
+		var label := Label.new()
+		label.text = HEADERS[i]
+		label.horizontal_alignment = COLS[i].align
+		label.add_theme_color_override("font_color", Utils.MUTED)
+		label.add_theme_font_size_override("font_size", 10)
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.size_flags_stretch_ratio = COLS[i].ratio
+		_header_row.add_child(label)
+
+
+## Secondary columns drop out as the workspace narrows.
+func _col_visible(index: int) -> bool:
+	match index:
+		COLS_FEES:
+			return _vp_width >= 950.0
+		COLS_HOLD:
+			return _vp_width >= 870.0
+		COLS_CLOSED:
+			return _vp_width >= 800.0
+		COLS_OPENED:
+			return _vp_width >= 730.0
+		_:
+			return true
+
+
+func _on_viewport_resized() -> void:
+	_vp_width = get_viewport().get_visible_rect().size.x
+	_fill_header()
+	_refresh()
+
+
+func _on_state_chip(filter: String) -> void:
+	_state_filter = filter
+	_refresh()
+
+
+func _refresh() -> void:
+	if _list_box == null:
+		return
+	for child in _list_box.get_children():
+		child.queue_free()
+
+	var query := _search.strip_edges().to_upper()
+	var rows: Array = []
+	for t in TradeManager.trades:
+		if _state_filter != "all" and str(t.get("state", "")) != _state_filter:
+			continue
+		if query != "" and not str(t.get("asset", "")).contains(query):
+			continue
+		rows.append(t)
+	rows.sort_custom(func(a, b): return TradeMetrics.last_activity(a) > TradeMetrics.last_activity(b))
+
+	for t in rows:
+		_list_box.add_child(_make_row(t))
+
+	var has_trades := not TradeManager.trades.is_empty()
+	_empty.text = "No trades yet - press + to log your first trade." if not has_trades \
+			else "No trades match the current filters."
+	_empty.visible = rows.is_empty()
+
+
+func _make_row(trade: Dictionary) -> Control:
+	var bd := TradeMetrics.breakdown(trade, _price_provider)
+	var now := int(Time.get_unix_time_from_system())
+
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(0, 34)
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
+	btn.add_theme_stylebox_override("hover", Utils.flat_style(Color(0.114, 0.129, 0.161), Utils.BORDER, 6, 6, 2))
+	btn.add_theme_stylebox_override("pressed", Utils.flat_style(Color(0.13, 0.15, 0.19), Utils.BORDER, 6, 6, 2))
+	btn.pressed.connect(_open_edit.bind(str(trade.get("id", ""))))
+
+	var row := HBoxContainer.new()
+	row.set_anchors_preset(Control.PRESET_FULL_RECT)
+	row.offset_left = 6
+	row.offset_right = -6
+	row.add_theme_constant_override("separation", 8)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	btn.add_child(row)
+
+	# Asset + type badge
+	var asset_cell := HBoxContainer.new()
+	asset_cell.alignment = BoxContainer.ALIGNMENT_BEGIN
+	asset_cell.add_theme_constant_override("separation", 6)
+	asset_cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var name_label := Label.new()
+	name_label.text = str(trade.get("asset", "?"))
+	name_label.add_theme_font_size_override("font_size", 13)
+	name_label.add_theme_color_override("font_color", Utils.TEXT)
+	asset_cell.add_child(name_label)
+	asset_cell.add_child(_badge(_type_tag(str(trade.get("asset_type", "stock"))), _type_color(trade)))
+	_add_cell(row, asset_cell, 0)
+
+	var dir_label := Label.new()
+	dir_label.text = "L" if str(trade.get("direction", "long")) == "long" else "S"
+	dir_label.add_theme_color_override("font_color", Utils.ACCENT if dir_label.text == "L" else Utils.ORANGE)
+	_add_cell(row, dir_label, 1)
+
+	_add_cell(row, _cell_label("%s @ %.2f" % [Utils.qty(float(bd.entry_qty)), float(bd.avg_entry)]), 2)
+	_add_cell(row, _cell_label(Utils.money(float(bd.fees)), Utils.MUTED), 3)
+
+	var open_state := str(trade.get("state", "open")) == "open"
+	_add_cell(row, _badge("OPEN" if open_state else "CLOSED",
+			Utils.GREEN if open_state else Utils.MUTED), 4)
+
+	_add_cell(row, _cell_label(Utils.date_str(int(trade.get("opened_at", 0))), Utils.MUTED), 5)
+	var closed_at := int(trade.get("closed_at", 0))
+	_add_cell(row, _cell_label(Utils.date_str(closed_at) if closed_at > 0 else "-", Utils.MUTED), 6)
+
+	var hold := 0.0
+	if open_state:
+		hold = float(now - int(trade.get("opened_at", 0)))
+	else:
+		hold = float(closed_at - int(trade.get("opened_at", 0)))
+	_add_cell(row, _cell_label(Utils.duration(hold)), 7)
+
+	var pnl_label := _cell_label("%s (%s)" % [Utils.money(float(bd.pnl), true), Utils.pct(float(bd.pnl_pct))],
+			Utils.change_color(float(bd.pnl)))
+	_add_cell(row, pnl_label, 8)
+	return btn
+
+
+func _add_cell(row: Control, content: Control, index: int) -> void:
+	if not _col_visible(index):
+		content.queue_free()
+		return
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.size_flags_stretch_ratio = COLS[index].ratio
+	if content is Label:
+		content.horizontal_alignment = COLS[index].align
+	elif content is HBoxContainer:
+		match COLS[index].align:
+			HORIZONTAL_ALIGNMENT_CENTER:
+				content.alignment = BoxContainer.ALIGNMENT_CENTER
+			HORIZONTAL_ALIGNMENT_RIGHT:
+				content.alignment = BoxContainer.ALIGNMENT_END
+	row.add_child(content)
+
+
+func _cell_label(text: String, color := Utils.TEXT) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_color_override("font_color", color)
+	label.add_theme_font_size_override("font_size", 12)
+	return label
+
+
+func _badge(text: String, fg: Color) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_color_override("font_color", fg)
+	label.add_theme_font_size_override("font_size", 9)
+	label.add_theme_stylebox_override("normal", Utils.flat_style(Color(fg.r, fg.g, fg.b, 0.16), Color.TRANSPARENT, 4, 5, 1))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return label
+
+
+func _type_tag(asset_type: String) -> String:
+	return {
+		"stock": "STOCK",
+		"crypto": "CRYPTO",
+		"custom": "CUSTOM",
+	}.get(asset_type, "STOCK")
+
+
+func _type_color(trade: Dictionary) -> Color:
+	match str(trade.get("asset_type", "stock")):
+		"crypto":
+			return Utils.ORANGE
+		"custom":
+			return Utils.PURPLE
+		_:
+			return Utils.ACCENT
+
+
+func _open_create() -> void:
+	_ensure_dialog().open_create()
+
+
+func _open_edit(id: String) -> void:
+	_ensure_dialog().open_edit(id)
+
+
+func _ensure_dialog() -> AcceptDialog:
+	if _dialog == null:
+		_dialog = TradeDialogScene.instantiate()
+		add_child(_dialog)
+	return _dialog

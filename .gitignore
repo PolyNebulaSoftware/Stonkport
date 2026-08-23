@@ -6,6 +6,9 @@
 build/
 web_dist/
 
+# Plans
+plans/
+
 # System
 .DS_Store
 Thumbs.db

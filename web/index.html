@@ -7,8 +7,14 @@
 	$GODOT_HEAD_INCLUDE
 	<style>
 		* { margin: 0; padding: 0; box-sizing: border-box; }
-		html, body { width: 100%; height: 100%; background-color: #0d1117; }
-		#app { display: flex; flex-direction: column; width: 100%; height: 100%; }
+		html, body {
+			width: 100%; height: 100%; overflow: hidden;
+			background-color: #0d1117;
+			touch-action: none; overscroll-behavior: none;
+		}
+		/* Godot (canvasResizePolicy 1) owns the canvas inline size; the flex
+		   wrapper just gives it the full page to measure against. */
+		#app { display: flex; flex-direction: column; width: 100vw; height: 100vh; }
 		#status-overlay {
 			position: absolute; inset: 0; z-index: 10;
 			display: flex; flex-direction: column; align-items: center; justify-content: center;

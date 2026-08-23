@@ -1,101 +1,71 @@
 extends Control
-## Root shell: header bar (title, live totals, refresh/settings) + TabContainer
-## with Dashboard / Holdings / Chart / Watchlist screens.
+## Root shell: center workspace (time-range bar above the active screen) with
+## the icon-only navigation rail docked on the right.
 
-var _value_label: Label
-var _day_label: Label
-var _tabs: TabContainer
-var _chart_screen: Control
-var _settings_dialog: AcceptDialog
+const NavRailScene := preload("res://scenes/nav_rail.tscn")
+const RangeBarScene := preload("res://scenes/time_range_bar.tscn")
+const DashboardScene := preload("res://scenes/dashboard.tscn")
+const TradesScene := preload("res://scenes/trades_screen.tscn")
+const SettingsScene := preload("res://scenes/settings_screen.tscn")
+
+var _rail: Control
+var _bar: Control
+var _screens := {}
+var _current := ""
 
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 
-	var margin := MarginContainer.new()
-	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-	for side in ["margin_left", "margin_top", "margin_right", "margin_bottom"]:
-		margin.add_theme_constant_override(side, 12)
-	add_child(margin)
-
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 10)
-	margin.add_child(vbox)
-
-	vbox.add_child(_build_header())
-
-	_tabs = TabContainer.new()
-	_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	vbox.add_child(_tabs)
-
-	var dashboard := preload("res://scenes/dashboard.tscn").instantiate()
-	_tabs.add_child(dashboard)
-	_tabs.set_tab_title(0, "Dashboard")
-
-	var holdings := preload("res://scenes/holdings.tscn").instantiate()
-	_tabs.add_child(holdings)
-	_tabs.set_tab_title(1, "Holdings")
-
-	_chart_screen = preload("res://scenes/chart.tscn").instantiate()
-	_tabs.add_child(_chart_screen)
-	_tabs.set_tab_title(2, "Chart")
-
-	var watchlist := preload("res://scenes/watchlist.tscn").instantiate()
-	_tabs.add_child(watchlist)
-	_tabs.set_tab_title(3, "Watchlist")
-	watchlist.chart_requested.connect(_on_chart_requested)
-
-	_settings_dialog = preload("res://scenes/dialogs/settings_dialog.tscn").instantiate()
-	add_child(_settings_dialog)
-
-	MarketSimulator.market_ticked.connect(_refresh_header)
-	PortfolioManager.portfolio_changed.connect(_refresh_header)
-	_refresh_header()
-
-
-func _build_header() -> Control:
-	var header := PanelContainer.new()
 	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 14)
-	header.add_child(hbox)
+	hbox.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(hbox)
 
-	var title := Label.new()
-	title.text = "Stonkport"
-	title.add_theme_font_size_override("font_size", 20)
-	title.add_theme_color_override("font_color", Utils.ACCENT)
-	hbox.add_child(title)
+	var center := VBoxContainer.new()
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hbox.add_child(center)
 
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hbox.add_child(spacer)
+	_bar = RangeBarScene.instantiate()
+	center.add_child(_bar)
 
-	_value_label = Label.new()
-	_value_label.add_theme_font_size_override("font_size", 18)
-	hbox.add_child(_value_label)
+	var workspace := MarginContainer.new()
+	workspace.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	workspace.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	for side in ["margin_left", "margin_top", "margin_right", "margin_bottom"]:
+		workspace.add_theme_constant_override(side, 4)
+	center.add_child(workspace)
 
-	_day_label = Label.new()
-	hbox.add_child(_day_label)
+	_screens = {
+		"dashboard": DashboardScene.instantiate(),
+		"trades": TradesScene.instantiate(),
+		"settings": SettingsScene.instantiate(),
+	}
+	for id in _screens:
+		workspace.add_child(_screens[id])
 
-	var refresh_btn := Button.new()
-	refresh_btn.text = "Refresh"
-	refresh_btn.pressed.connect(func() -> void: MarketSimulator.tick())
-	hbox.add_child(refresh_btn)
+	_rail = NavRailScene.instantiate()
+	hbox.add_child(_rail)
 
-	var settings_btn := Button.new()
-	settings_btn.text = "Settings"
-	settings_btn.pressed.connect(func() -> void: _settings_dialog.popup_centered())
-	hbox.add_child(settings_btn)
-	return header
-
-
-func _refresh_header() -> void:
-	_value_label.text = Utils.money(PortfolioManager.get_total_value())
-	var day := PortfolioManager.get_day_change()
-	var day_pct := PortfolioManager.get_day_change_pct()
-	_day_label.text = "%s (%s) today" % [Utils.money(day, true), Utils.pct(day_pct)]
-	_day_label.add_theme_color_override("font_color", Utils.change_color(day))
+	_bar.range_changed.connect(_on_range_changed)
+	_rail.nav_selected.connect(_select)
+	_select("dashboard")
 
 
-func _on_chart_requested(ticker: String) -> void:
-	_tabs.current_tab = 2
-	_chart_screen.set_ticker(ticker)
+
+func _select(id: String) -> void:
+	_current = id
+	for key in _screens:
+		_screens[key].visible = key == id
+	_bar.visible = id != "settings"
+	_push_range()
+
+
+func _on_range_changed(_min_ts: int, _max_ts: int) -> void:
+	_push_range()
+
+
+func _push_range() -> void:
+	var screen: Control = _screens.get(_current)
+	if screen != null and screen.has_method("set_range"):
+		var bounds: Array = _bar.range_values()
+		screen.set_range(int(bounds[0]), int(bounds[1]))

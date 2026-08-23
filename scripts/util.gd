@@ -7,18 +7,36 @@ const BORDER := Color("30363d")
 const ACCENT := Color("58a6ff")
 const GREEN := Color("3fb950")
 const RED := Color("f85149")
+const ORANGE := Color("d29922")
+const PURPLE := Color("a371f7")
 const TEXT := Color("e6edf3")
 const MUTED := Color("8b949e")
 
+## Currency codes and their display symbols. TradeManager keeps
+## [member currency_symbol] in sync with the saved setting.
+const CURRENCIES := {
+	"USD": "$",
+	"EUR": "€",
+	"GBP": "£",
+	"JPY": "¥",
+	"CNY": "¥",
+	"CAD": "CA$",
+	"AUD": "A$",
+	"CHF": "CHF ",
+}
 
-## Formats a value as "$1,234.56"; with signed=true → "+$1,234.56" / "-$1,234.56".
+static var currency_symbol := "$"
+
+
+## Formats a value with the active currency symbol, e.g. "$1,234.56";
+## with signed=true → "+$1,234.56" / "-$1,234.56".
 static func money(value: float, signed := false) -> String:
 	var sign_prefix := ""
 	if signed:
 		sign_prefix = "+" if value >= 0.0 else "-"
 	elif value < 0.0:
 		sign_prefix = "-"
-	return "%s$%s" % [sign_prefix, _with_commas("%.2f" % absf(value))]
+	return "%s%s%s" % [sign_prefix, currency_symbol, _with_commas("%.2f" % absf(value))]
 
 
 static func pct(value: float, signed := true) -> String:
@@ -44,6 +62,130 @@ static func change_color(value: float) -> Color:
 	if value < -0.0001:
 		return RED
 	return MUTED
+
+
+## Trims trailing zeros for quantity display: 15.0 → "15", 0.50 → "0.5".
+static func qty(value: float) -> String:
+	var text := "%.4f" % value
+	while text.ends_with("0"):
+		text = text.substr(0, text.length() - 1)
+	return text.rstrip(".")
+
+
+## Human-readable span: "3d 4h", "2h 15m" or "45m".
+static func duration(seconds: float) -> String:
+	var total := int(maxf(seconds, 0.0))
+	var days := floori(total / 86400.0)
+	var hours := floori((total % 86400) / 3600.0)
+	var minutes := floori((total % 3600) / 60.0)
+	if days > 0:
+		return "%dd %dh" % [days, hours]
+	if hours > 0:
+		return "%dh %dm" % [hours, minutes]
+	return "%dm" % minutes
+
+
+## UTC calendar date of a unix timestamp: "2026-08-23".
+static func date_str(ts: int) -> String:
+	return Time.get_datetime_string_from_unix_time(ts).substr(0, 10)
+
+
+## UTC "YYYY-MM-DD HH:MM" of a unix timestamp.
+static func datetime_str(ts: int) -> String:
+	return Time.get_datetime_string_from_unix_time(ts).substr(0, 16)
+
+
+## Parses "YYYY-MM-DD" (optionally "YYYY-MM-DD HH:MM[:SS]") into unix seconds.
+## A bare date maps to 23:59:59 when end_of_day is set. Returns -1 on invalid
+## input.
+static func parse_date(text: String, end_of_day := false) -> int:
+	var t := text.strip_edges().replace("T", " ")
+	if t.is_empty():
+		return -1
+	var parts := t.split(" ")
+	var day := parts[0].split("-")
+	if day.size() != 3:
+		return -1
+	var y := int(day[0])
+	var m := int(day[1])
+	var d := int(day[2])
+	if y < 1970 or m < 1 or m > 12 or d < 1 or d > 31:
+		return -1
+	var hh := 0
+	var mm := 0
+	var ss := 0
+	if end_of_day:
+		hh = 23
+		mm = 59
+		ss = 59
+	elif parts.size() > 1:
+		var clock := parts[1].split(":")
+		hh = clampi(int(clock[0]) if clock.size() > 0 else 0, 0, 23)
+		mm = clampi(int(clock[1]) if clock.size() > 1 else 0, 0, 59)
+		ss = clampi(int(clock[2]) if clock.size() > 2 else 0, 0, 59)
+	var dt := {"year": y, "month": m, "day": d, "hour": hh, "minute": mm, "second": ss}
+	var ts := int(Time.get_unix_time_from_datetime_dict(dt))
+	var back := Time.get_datetime_dict_from_unix_time(ts)
+	if int(back.year) != y or int(back.month) != m or int(back.day) != d \
+			or int(back.hour) != hh or int(back.minute) != mm:
+		return -1
+	return ts
+
+
+## Escapes a single field for RFC-4180 CSV output.
+static func csv_field(value: String) -> String:
+	if value.contains(",") or value.contains("\"") or value.contains("\n") or value.contains("\r"):
+		return "\"%s\"" % value.replace("\"", "\"\"")
+	return value
+
+
+## Splits one CSV line into fields, honoring double-quoted escapes.
+static func csv_split(line: String) -> Array:
+	var fields: Array = []
+	var current := ""
+	var in_quotes := false
+	var i := 0
+	while i < line.length():
+		var ch := line[i]
+		if in_quotes:
+			if ch == "\"":
+				if i + 1 < line.length() and line[i + 1] == "\"":
+					current += "\""
+					i += 1
+				else:
+					in_quotes = false
+			else:
+				current += ch
+		elif ch == "\"":
+			in_quotes = true
+		elif ch == ",":
+			fields.append(current)
+			current = ""
+		else:
+			current += ch
+		i += 1
+	fields.append(current)
+	return fields
+
+
+## Convenience StyleBoxFlat for badges, chips and panels.
+static func flat_style(bg: Color, border := Color.TRANSPARENT, radius := 6, margin_h := 8.0, margin_v := 3.0) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg
+	sb.set_corner_radius_all(radius)
+	if border.a > 0.0:
+		sb.set_border_width_all(1)
+		sb.border_color = border
+	sb.content_margin_left = margin_h
+	sb.content_margin_right = margin_h
+	sb.content_margin_top = margin_v
+	sb.content_margin_bottom = margin_v
+	return sb
+
+
+## Default compact panel background for cards and section panels.
+static func panel_style() -> StyleBoxFlat:
+	return flat_style(PANEL, BORDER, 8, 10.0, 8.0)
 
 
 static func _with_commas(number_text: String) -> String:
