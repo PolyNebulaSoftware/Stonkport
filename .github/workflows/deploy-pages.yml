@@ -16,6 +16,9 @@ concurrency:
 
 env:
   GODOT_VERSION: "4.7.2"
+  # Unique per attempt: re-running a failed job must not leave two
+  # artifacts named "github-pages", which breaks deploy-pages@v4.
+  PAGES_ARTIFACT_NAME: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   deploy:
@@ -58,8 +61,11 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
+          name: ${{ env.PAGES_ARTIFACT_NAME }}
           path: web_dist
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: ${{ env.PAGES_ARTIFACT_NAME }}
