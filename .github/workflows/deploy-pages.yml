@@ -14,24 +14,20 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
-env:
-  GODOT_VERSION: "4.7.2"
-
 jobs:
   deploy:
     name: Export & Deploy
     runs-on: ubuntu-latest
+    # godot-ci image ships the editor on PATH plus the matching export
+    # templates at /root/.local/share/godot/export_templates/4.7.2.stable/
+    container:
+      image: barichello/godot-ci:4.7.2
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Godot engine + export templates
-        uses: abarichello/godot-ci@master
-        with:
-          godot_version: ${{ env.GODOT_VERSION }}
 
       - name: Import assets (fresh checkout)
         run: godot --headless --path . --import

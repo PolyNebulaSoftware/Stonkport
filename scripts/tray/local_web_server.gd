@@ -37,7 +37,7 @@ const STATUS_TEXT := {
 ## base port is really another instance of this app (and not some unrelated
 ## program) before sending the browser there.
 const LAUNCHER_PING_PATH := "__launcher_ping"
-const LAUNCHER_PING_BODY := "LocalStoportLauncher"
+const LAUNCHER_PING_BODY := "StonkportLauncher"
 
 var _server := TCPServer.new()
 var _clients := {}  # StreamPeerTCP -> {"buffer": String, "since": int}

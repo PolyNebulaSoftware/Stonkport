@@ -1,7 +1,7 @@
 extends Node
 ## Tray launcher module (desktop builds only).
 ##
-## Minimizes LocalStoport to the system tray via the built-in StatusIndicator
+## Minimizes Stonkport to the system tray via the built-in StatusIndicator
 ## node, serves web_dist/ over localhost with a tiny HTTP server, and opens
 ## the served web app in the default browser when the tray icon is clicked.
 ## On the Web platform the module disables itself entirely.
@@ -10,7 +10,7 @@ const WebServerScript := preload("res://scripts/tray/local_web_server.gd")
 
 const PORT_HINT := 17400
 const WEB_DIR_NAME := "web_dist"
-const TOOLTIP_TEXT := "LocalStoport"
+const TOOLTIP_TEXT := "Stonkport"
 
 const MENU_OPEN_WEB_APP := 0
 const MENU_SHOW_WINDOW := 1

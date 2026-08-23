@@ -2,7 +2,7 @@
 
 ## Goal
 
-Host the Godot WASM build of LocalStoport on GitHub Pages at
+Host the Godot WASM build of Stonkport on GitHub Pages at
 `https://<user>.github.io/<repo>/` so the app has a permanent public URL,
 while keeping the tray-launcher pipeline (`web_dist/` + Windows exe) intact.
 

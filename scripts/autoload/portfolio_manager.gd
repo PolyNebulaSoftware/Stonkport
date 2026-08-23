@@ -7,7 +7,7 @@ signal portfolio_changed
 signal settings_changed
 
 const SAVE_PATH := "user://portfolio.json"
-const LS_KEY := "localstoport_portfolio_v1"
+const LS_KEY := "stonkport_portfolio_v1"
 const SAVE_VERSION := 1
 const DEMO_CASH := 5000.0
 const MAX_TRANSACTIONS := 500

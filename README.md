@@ -1,4 +1,4 @@
-# LocalStoport
+# Stonkport
 
 A single-page stock portfolio web app where **all UI is rendered by Godot 4.x's Control node system**, exported to WebAssembly and embedded in an HTML page. Fully client-side: mock market data comes from a built-in simulator, and portfolio state persists to the browser via `user://` (IndexedDB on the web). No backend, no API keys.
 
@@ -40,10 +40,10 @@ The same project also exports a Windows exe that lives in the system tray and se
 
 ```sh
 godot --headless --path . --export-release "Web" web_dist/index.html            # build the web assets first
-godot --headless --path . --export-release "Windows Exe" build/windows/LocalStoport.exe
+godot --headless --path . --export-release "Windows Exe" build/windows/Stonkport.exe
 ```
 
-Run `LocalStoport.exe` and it minimizes straight to the tray via the built-in `StatusIndicator` node. Left-click the tray icon to serve `web_dist/` from a tiny built-in HTTP server on `127.0.0.1:17400` and open it in your default browser — fully offline, no Python needed. Right-click for **Open Web App / Show Window / Quit**; closing the window hides to tray instead of quitting. Launching a second copy just reveals the running one in the browser and exits. The web build is packed into the exe (`embed_pck`), but a `web_dist/` folder next to the exe takes precedence if present.
+Run `Stonkport.exe` and it minimizes straight to the tray via the built-in `StatusIndicator` node. Left-click the tray icon to serve `web_dist/` from a tiny built-in HTTP server on `127.0.0.1:17400` and open it in your default browser — fully offline, no Python needed. Right-click for **Open Web App / Show Window / Quit**; closing the window hides to tray instead of quitting. Launching a second copy just reveals the running one in the browser and exits. The web build is packed into the exe (`embed_pck`), but a `web_dist/` folder next to the exe takes precedence if present.
 
 ## Hosting (GitHub Pages)
 
@@ -51,7 +51,7 @@ Every push to `main` rebuilds the web export with the [godot-ci](https://github.
 
 ## Verify persistence
 
-Add/edit/remove positions in the browser, then refresh the page — the portfolio reloads from IndexedDB. On desktop it round-trips through `%APPDATA%/Godot/app_userdata/LocalStoport/portfolio.json`.
+Add/edit/remove positions in the browser, then refresh the page — the portfolio reloads from IndexedDB. On desktop it round-trips through `%APPDATA%/Godot/app_userdata/Stonkport/portfolio.json`.
 
 ## Project structure
 

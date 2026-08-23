@@ -1,5 +1,5 @@
 @echo off
-:: Builds LocalStoport export presets via the Godot CLI.
+:: Builds Stonkport export presets via the Godot CLI.
 :: Usage: export_presets.cmd [web|windows|all]   (default: all)
 :: Override the engine binary by setting the GODOT environment variable.
 
@@ -24,9 +24,9 @@ echo [export] Web preset -^> web_dist/
 if /i not "%TARGET%"=="all" goto :done
 
 :windows
-echo [export] Windows Exe preset -^> build/windows/LocalStoport.exe
+echo [export] Windows Exe preset -^> build/windows/Stonkport.exe
 if not exist "build\windows" mkdir "build\windows"
-"%GODOT_EXE%" --headless --path . --export-release "Windows Exe" "build\windows\LocalStoport.exe" || goto :fail
+"%GODOT_EXE%" --headless --path . --export-release "Windows Exe" "build\windows\Stonkport.exe" || goto :fail
 
 :done
 echo [export] Done.

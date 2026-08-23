@@ -60,7 +60,7 @@ func _build_header() -> Control:
 	header.add_child(hbox)
 
 	var title := Label.new()
-	title.text = "LocalStoport"
+	title.text = "Stonkport"
 	title.add_theme_font_size_override("font_size", 20)
 	title.add_theme_color_override("font_color", Utils.ACCENT)
 	hbox.add_child(title)

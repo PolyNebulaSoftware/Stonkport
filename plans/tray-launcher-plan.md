@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add a **separate launcher module** to LocalStoport:
+Add a **separate launcher module** to Stonkport:
 
 1. New **Windows Executable** export preset alongside the existing Web preset.
 2. On launch (desktop only), the app **minimizes to tray** using Godot's built-in [`StatusIndicator`](scripts/tray/tray_launcher.gd) node (available since Godot 4.5; project targets 4.7).
@@ -49,7 +49,7 @@ Autoload orchestrator (`extends Node`):
   - Resolve content root: `OS.get_executable_path().get_base_dir() + "/web_dist/"` if it exists, else `res://web_dist/`.
   - Start server with port scan starting at `17400` (a few candidates).
   - **Single-instance guard**: if the primary port is already taken, assume an instance is running → just `OS.shell_open(url)` and `get_tree().quit()`.
-  - Build UI in code: `StatusIndicator` with `icon = load("res://icon.svg")`, `tooltip = "LocalStoport"`, and a `PopupMenu` (`Open Web App`, `Show Window`, `---`, `Quit`).
+  - Build UI in code: `StatusIndicator` with `icon = load("res://icon.svg")`, `tooltip = "Stonkport"`, and a `PopupMenu` (`Open Web App`, `Show Window`, `---`, `Quit`).
   - Defer window hide by one frame (`await get_tree().process_frame`) then `get_window().hide()` — true minimize-to-tray.
 - Signal wiring:
   - `StatusIndicator.pressed(pos, MOUSE_BUTTON_LEFT)` → `OS.shell_open("http://127.0.0.1:%d" % port)`.
@@ -75,10 +75,10 @@ TrayLauncher="*res://scripts/tray/tray_launcher.gd"
 Append `[preset.1]` — Windows Desktop:
 
 - `name="Windows Exe"`, `platform="Windows Desktop"`, `runnable=true`
-- `export_path="build/windows/LocalStoport.exe"`
+- `export_path="build/windows/Stonkport.exe"`
 - `binary_format/architecture="x86_64"`, `binary_format/embed_pck=true`
 - `include_filter="web_dist/**"` — packs the web build into the exe so it is a **single self-contained file**
-- `application/product_name="LocalStoport"`, icon left as project default (a real `.ico` can be added later)
+- `application/product_name="Stonkport"`, icon left as project default (a real `.ico` can be added later)
 - Codesigning off (unsigned local tool)
 
 Note: embedding `web_dist/` roughly doubles exe size (~+40 MB). Runtime still prefers a sibling `web_dist/` folder if present, so users can swap builds without re-exporting.
@@ -104,7 +104,7 @@ New "Windows launcher" section: how to build (`--export-release "Web"` into `web
 2. Launch exe twice: second instance opens browser and exits immediately.
 3. Browser loads WASM correctly (progress bar completes — proves MIME types OK).
 4. `godot --headless --path . --export-release "Web" web_dist/index.html` still works unchanged.
-5. `godot --headless --path . --export-release "Windows Exe" build/windows/LocalStoport.exe` produces a runnable exe.
+5. `godot --headless --path . --export-release "Windows Exe" build/windows/Stonkport.exe` produces a runnable exe.
 
 ## Implementation Todos
 

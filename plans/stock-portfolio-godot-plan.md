@@ -1,4 +1,4 @@
-# LocalStoport — Stock Portfolio Web App (Godot 4.x WASM)
+# Stonkport — Stock Portfolio Web App (Godot 4.x WASM)
 
 ## 1. Overview
 
@@ -49,7 +49,7 @@ flowchart TD
 ## 4. Project Structure
 
 ```
-LocalStoport/
+Stonkport/
 ├── project.godot                  # Project config, autoloads, web-friendly window settings
 ├── export_presets.cfg             # HTML5 export preset
 ├── icon.svg
@@ -184,7 +184,7 @@ Root scene `main.tscn`: full-rect `Control` → `MarginContainer` → `VBoxConta
 
 ```ini
 [application]
-config/name="LocalStoport"
+config/name="Stonkport"
 run/main_scene="res://scenes/main.tscn"
 
 [autoload]
@@ -251,6 +251,6 @@ What it demonstrates:
 
 Relevance to this plan:
 
-- **Alternative delivery target**: the same LocalStoport scenes / scripts / autoloads could be hosted inside a native application (a desktop shell, or embedded within another engine or tool) using this approach, complementing the WASM web export in §11–12.
+- **Alternative delivery target**: the same Stonkport scenes / scripts / autoloads could be hosted inside a native application (a desktop shell, or embedded within another engine or tool) using this approach, complementing the WASM web export in §11–12.
 - **Caveats** (per its README): desktop-only (Windows/Linux; no working web path — the author's WASM attempt stalls on virtual-filesystem access); requires building the full engine twice (engine + godot-cpp); dynamic linking only (static linking is broken upstream, godotengine/godot#111876); supports a single open→shutdown lifecycle with no parallel instances; Godot must create its own window or run headless (no rendering into an app-controlled window yet).
 - For a production-grade native-embed setup, the author also maintains [`dieselhorse_godot_framework`](https://github.com/zorbathut/dieselhorse_godot_framework), a vendoring framework that handles many build corner cases.

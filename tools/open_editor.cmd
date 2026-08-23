@@ -1,5 +1,5 @@
 @echo off
-:: Opens the LocalStoport project folder in the Godot editor (detached).
+:: Opens the Stonkport project folder in the Godot editor (detached).
 :: Override the engine binary by setting the GODOT environment variable.
 
 setlocal
