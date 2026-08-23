@@ -48,7 +48,9 @@ jobs:
         run: godot --headless --path . --import
 
       - name: Export Web build
-        run: godot --headless --path . --export-release "Web" web_dist/index.html
+        run: |
+          mkdir -p web_dist
+          godot --headless --path . --export-release "Web" web_dist/index.html
 
       - name: Prepare Pages artifact
         run: touch web_dist/.nojekyll
