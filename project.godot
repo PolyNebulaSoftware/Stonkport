@@ -34,7 +34,18 @@ window/stretch/aspect="expand"
 
 theme/custom="res://theme/theme.tres"
 
+[internationalization]
+
+; Force the fallback text driver (English-only UI; no RTL/complex scripts,
+; ligatures or OpenType features) instead of the advanced ICU server — matches
+; minified templates built with module_text_server_adv_enabled=no.
+rendering/text_driver="Fallback"
+
 [rendering]
 
+; Compatibility renderer only (OpenGL) — keeps exports free of Vulkan code.
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+; Pure 2D UI needs no GPU-compressed textures; skip transcoding them into the .pck.
+textures/vram_compression/import_s3tc_bptc=false
+textures/vram_compression/import_etc2_astc=false
