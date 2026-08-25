@@ -106,6 +106,7 @@ func _build_data_section() -> Control:
 	var export_caption := Label.new()
 	export_caption.text = "Save every trade to a CSV file."
 	export_caption.add_theme_color_override("font_color", Utils.MUTED)
+	export_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	export_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	export_row.add_child(export_caption)
 	var export_btn := Button.new()
@@ -120,6 +121,7 @@ func _build_data_section() -> Control:
 	var import_caption := Label.new()
 	import_caption.text = "Import trades from CSV. Rows merge by id."
 	import_caption.add_theme_color_override("font_color", Utils.MUTED)
+	import_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	import_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	import_row.add_child(import_caption)
 	var import_btn := Button.new()
@@ -139,6 +141,7 @@ func _build_data_section() -> Control:
 	var clear_caption := Label.new()
 	clear_caption.text = "Permanently deletes every trade."
 	clear_caption.add_theme_color_override("font_color", Utils.MUTED)
+	clear_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	clear_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	clear_row.add_child(clear_caption)
 	_clear_btn = Button.new()
@@ -355,14 +358,14 @@ func _ensure_paste_dialog() -> AcceptDialog:
 	if _paste_dialog == null:
 		_paste_dialog = AcceptDialog.new()
 		_paste_dialog.title = "Paste CSV"
-		_paste_dialog.min_size = Vector2i(560, 380)
+		_paste_dialog.min_size = Vector2i(460, 340)
 		_paste_dialog.get_ok_button().hide()
 		var box := VBoxContainer.new()
 		box.add_theme_constant_override("separation", 8)
 		_paste_dialog.add_child(box)
 		_paste_edit = TextEdit.new()
 		_paste_edit.placeholder_text = CSV_HEADER
-		_paste_edit.custom_minimum_size = Vector2(520, 260)
+		_paste_edit.custom_minimum_size = Vector2(400, 240)
 		box.add_child(_paste_edit)
 		var row := HBoxContainer.new()
 		row.alignment = BoxContainer.ALIGNMENT_END

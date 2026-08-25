@@ -11,6 +11,7 @@ var _content: VBoxContainer
 var _best_box: VBoxContainer
 var _bars_box: VBoxContainer
 var _recent_box: VBoxContainer
+var _panels_row: GridContainer
 
 var _price_provider := func(asset: String) -> float: return MarketSimulator.get_price(asset)
 
@@ -54,18 +55,37 @@ func _ready() -> void:
 	for spec in [["Avg Win Hold", "hold_win"], ["Avg Loss Hold", "hold_loss"], ["Win Streak", "streak"], ["Biggest Win", "big_win"], ["Biggest Loss", "big_loss"]]:
 		row2.add_child(_make_card(spec[0], spec[1]))
 
-	var row3 := HBoxContainer.new()
-	row3.add_theme_constant_override("separation", 8)
+	# Stat panels reflow between 3 / 2 / 1 columns with the window width.
+	var row3 := GridContainer.new()
+	row3.columns = 3
+	row3.add_theme_constant_override("h_separation", 8)
+	row3.add_theme_constant_override("v_separation", 8)
 	row3.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_content.add_child(row3)
 	row3.add_child(_make_panel("Best Performing Asset", _build_best()))
 	row3.add_child(_make_panel("P/L by Asset", _build_bars()))
 	row3.add_child(_make_panel("Recent Closed Trades", _build_recent()))
+	_panels_row = row3
+	_apply_responsive()
 
 	TradeManager.trades_changed.connect(_refresh)
 	TradeManager.settings_changed.connect(_refresh)
 	MarketSimulator.market_ticked.connect(_refresh)
+	get_viewport().size_changed.connect(_apply_responsive)
 	_refresh()
+
+
+## Reflows the bottom stat panels for the current window width.
+func _apply_responsive() -> void:
+	if _panels_row == null:
+		return
+	var w := get_viewport().get_visible_rect().size.x
+	if w < 760.0:
+		_panels_row.columns = 1
+	elif w < 1120.0:
+		_panels_row.columns = 2
+	else:
+		_panels_row.columns = 3
 
 
 func set_range(min_ts: int, max_ts: int) -> void:

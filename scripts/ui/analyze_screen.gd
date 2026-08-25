@@ -50,6 +50,7 @@ var _paths: Array = []          # sample paths of future closes
 
 # UI.
 var _canvas: ChartCanvas        # clipped surface every chart primitive draws on
+var _chart_holder: Control      # unclipped parent for axis widgets
 var _ticker_button: Button
 var _price_label: Label
 var _tf_button: OptionButton
@@ -86,6 +87,8 @@ var _drag_start_y_zoom := 1.0
 var _drag_start_bars := 0.0
 var _drag_start_shift := 0.0
 var _drag_start_ratio := 0.0
+var _log_scale := false    # Y axis: logarithmic instead of linear
+var _log_btn: Button
 var _layout := {}          # last drawn chart geometry for input mapping
 
 
@@ -131,11 +134,32 @@ func _ready() -> void:
 	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hbox.add_child(holder)
+	_chart_holder = holder
 
 	_canvas = ChartCanvas.new()
 	_canvas.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_canvas.draw.connect(_draw_chart)
 	holder.add_child(_canvas)
+
+	# Linear/log toggle pinned to the bottom of the Y-axis bar.
+	_log_btn = Button.new()
+	_log_btn.text = "L"
+	_log_btn.toggle_mode = true
+	_log_btn.tooltip_text = "Toggle linear / logarithmic scale"
+	_log_btn.focus_mode = Control.FOCUS_NONE
+	_log_btn.add_theme_font_size_override("font_size", 11)
+	_log_btn.custom_minimum_size = Vector2(24, 24)
+	_log_btn.anchor_left = 1.0
+	_log_btn.anchor_right = 1.0
+	_log_btn.anchor_top = 1.0
+	_log_btn.anchor_bottom = 1.0
+	_log_btn.offset_left = -27
+	_log_btn.offset_right = -3
+	_log_btn.offset_top = -27
+	_log_btn.offset_bottom = -3
+	_log_btn.toggled.connect(_on_log_toggled)
+	# Parented to the unclipped holder so it never gets cut off.
+	_chart_holder.add_child(_log_btn)
 
 	# Floating top bar spans the whole screen and ignores the left panel.
 	add_child(_build_top_overlay())
@@ -144,9 +168,11 @@ func _ready() -> void:
 	TradeManager.trades_changed.connect(_on_trades_changed)
 	TradeManager.settings_changed.connect(_recompute)
 	MarketSimulator.market_ticked.connect(_recompute)
+	get_viewport().size_changed.connect(_apply_responsive)
 
 	_ticker = _default_ticker()
 	_update_ticker_button()
+	_apply_responsive()
 	_recompute()
 
 
@@ -182,7 +208,7 @@ func _build_options_panel() -> Control:
 	_ribbon_cfg.add_child(_check("SMAs", _ribbon_sma_on, "ribbon_sma"))
 	_ribbon_cfg.add_child(_spin_row("Lines per type", _ribbon_count, 1,
 			maxi(EMA_LENGTHS.size(), SMA_LENGTHS.size()), "ema_count"))
-	analytics.add_child(_ribbon_cfg)
+	analytics.add_child(_indent(_ribbon_cfg))
 
 	analytics.add_child(_check("Stoch RSI pane", _stoch_on, "stoch"))
 	_stoch_cfg = VBoxContainer.new()
@@ -191,7 +217,7 @@ func _build_options_panel() -> Control:
 	_stoch_cfg.add_child(_spin_row("Stoch length", _stoch_len, 2, 50, "stoch_len"))
 	_stoch_cfg.add_child(_spin_row("%K smooth", _k_smooth, 1, 10, "k_smooth"))
 	_stoch_cfg.add_child(_spin_row("%D smooth", _d_smooth, 1, 10, "d_smooth"))
-	analytics.add_child(_stoch_cfg)
+	analytics.add_child(_indent(_stoch_cfg))
 
 	var sims := _add_section(vbox, "Simulations")
 	sims.add_child(_check("GBM projection", _gbm_on, "gbm"))
@@ -220,7 +246,7 @@ func _build_options_panel() -> Control:
 	var note := _muted("Drift and volatility are estimated from the loaded candles.")
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_gbm_cfg.add_child(note)
-	sims.add_child(_gbm_cfg)
+	sims.add_child(_indent(_gbm_cfg))
 
 	var disclaimer := _muted("Analytics and simulations are for information only — not financial advice. Any interpretation or trading decision based on them is your own responsibility.")
 	disclaimer.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -343,10 +369,34 @@ func _toggle_section(body: Control, head: Button, title: String, on: bool) -> vo
 	head.text = ("▾ " if on else "▸ ") + title
 
 
+## Slight left indentation so config rows read as children of their toggle.
+func _indent(content: Control) -> Control:
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 16)
+	margin.add_theme_constant_override("margin_right", 2)
+	margin.add_child(content)
+	return margin
+
+
 func _toggle_options() -> void:
 	var show := not _options_panel.visible
 	_options_panel.visible = show
 	_collapse_btn.text = "‹" if show else "›"
+
+
+## Narrow/portrait windows auto-collapse the analytics panel and slim it.
+func _apply_responsive() -> void:
+	if _options_panel == null or _collapse_btn == null:
+		return
+	var w := get_viewport().get_visible_rect().size.x
+	_options_panel.custom_minimum_size = Vector2(
+			208.0 if w < 1150.0 else LEFT_W - 8, 0)
+	if w < 900.0:
+		_options_panel.visible = false
+		_collapse_btn.text = "›"
+	elif w >= 1020.0:
+		_options_panel.visible = true
+		_collapse_btn.text = "‹"
 
 
 func _check(text: String, pressed: bool, key: String) -> CheckButton:
@@ -445,6 +495,11 @@ func _on_timeframe_selected(index: int) -> void:
 	_timeframe = TIMEFRAMES[index]
 	_reset_view()
 	_recompute()
+
+
+func _on_log_toggled(on: bool) -> void:
+	_log_scale = on
+	_canvas.queue_redraw()
 
 
 func _on_trades_changed() -> void:
@@ -1070,7 +1125,7 @@ func _draw_chart() -> void:
 	for g in 5:
 		var gy := main.position.y + main.size.y * float(g) / 4.0
 		_canvas.draw_line(Vector2(main.position.x, gy), Vector2(main.end.x, gy), grid, 1.0)
-		var val := hi - (hi - lo) * float(g) / 4.0
+		var val := _value_at_y(gy, lo, hi, main)
 		_canvas.draw_string(font, Vector2(main.end.x + 6, gy - 4), _axis_price(val),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Utils.MUTED)
 
@@ -1112,16 +1167,16 @@ func _draw_chart() -> void:
 	# last candle and clipped to the visible day-step window.
 	if proj_from >= 0 and proj_to >= proj_from:
 		var s0 := float(_view_bars_data[n - 1]["close"])
-		var y0 := _map_y(s0, lo, hi, main)
+		var y0 := _price_y(s0, lo, hi, main)
 		var hi_pts := PackedVector2Array([Vector2(x_last, y0)])
 		var mid_pts := PackedVector2Array([Vector2(x_last, y0)])
 		var lo_pts := PackedVector2Array([Vector2(x_last, y0)])
 		for t in range(proj_from, proj_to + 1):
 			var pt: Dictionary = _cone[t]
 			var x := x_last + float(t + 1) * day_slot
-			hi_pts.append(Vector2(x, _map_y(float(pt["hi"]), lo, hi, main)))
-			mid_pts.append(Vector2(x, _map_y(float(pt["mid"]), lo, hi, main)))
-			lo_pts.append(Vector2(x, _map_y(float(pt["lo"]), lo, hi, main)))
+			hi_pts.append(Vector2(x, _price_y(float(pt["hi"]), lo, hi, main)))
+			mid_pts.append(Vector2(x, _price_y(float(pt["mid"]), lo, hi, main)))
+			lo_pts.append(Vector2(x, _price_y(float(pt["lo"]), lo, hi, main)))
 		if hi_pts.size() >= 2:
 			var poly := PackedVector2Array(hi_pts)
 			for k in range(lo_pts.size() - 1, -1, -1):
@@ -1134,7 +1189,7 @@ func _draw_chart() -> void:
 			var pp := PackedVector2Array([Vector2(x_last, y0)])
 			for t in range(proj_from, proj_to + 1):
 				pp.append(Vector2(x_last + float(t + 1) * day_slot,
-						_map_y(float(path[t + 1]), lo, hi, main)))
+						_price_y(float(path[t + 1]), lo, hi, main)))
 			if pp.size() >= 2:
 				_canvas.draw_polyline(pp, _alpha(Utils.TEXT, 0.18), 1.0, true)
 		if x_last >= main.position.x and x_last <= main.end.x:
@@ -1152,17 +1207,17 @@ func _draw_chart() -> void:
 			var l := float(bar["low"])
 			var c := float(bar["close"])
 			var col := Utils.GREEN if c >= o else Utils.RED
-			_canvas.draw_line(Vector2(cx, _map_y(h, lo, hi, main)),
-					Vector2(cx, _map_y(l, lo, hi, main)), col, 1.2)
-			var y_open := _map_y(o, lo, hi, main)
-			var y_close := _map_y(c, lo, hi, main)
+			_canvas.draw_line(Vector2(cx, _price_y(h, lo, hi, main)),
+					Vector2(cx, _price_y(l, lo, hi, main)), col, 1.2)
+			var y_open := _price_y(o, lo, hi, main)
+			var y_close := _price_y(c, lo, hi, main)
 			_canvas.draw_rect(Rect2(cx - body_w * 0.5, minf(y_open, y_close),
 					body_w, maxf(absf(y_close - y_open), 1.2)), col)
 
 	# Live price marker: dotted guide from the last candle to the axis.
 	var live := Utils.from_usd(MarketSimulator.get_price(_ticker))
 	if live > 0.0:
-		var ly := _map_y(live, lo, hi, main)
+		var ly := _price_y(live, lo, hi, main)
 		if ly >= main.position.y and ly <= main.end.y:
 			var lcol := Utils.change_color(live - MarketSimulator.get_prev_close(_ticker))
 			var xs := clampf(main.position.x + (float(n - 1) - _view_start + 0.5) * slot,
@@ -1224,7 +1279,7 @@ func _draw_chart() -> void:
 		if in_main:
 			_canvas.draw_dashed_line(Vector2(main.position.x, _mouse_pos.y),
 					Vector2(main.end.x, _mouse_pos.y), dash, 1.0, 3.0)
-			var price := lo + (hi - lo) * (1.0 - (_mouse_pos.y - main.position.y) / main.size.y)
+			var price := _value_at_y(_mouse_pos.y, lo, hi, main)
 			_canvas.draw_rect(Rect2(main.end.x + 2.0, _mouse_pos.y - 8.0, AXIS_W - 4.0, 16.0), chip_bg)
 			_canvas.draw_string(font, Vector2(main.end.x + 6.0, _mouse_pos.y + 4.0),
 					_axis_price(price), HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Utils.TEXT)
@@ -1254,7 +1309,7 @@ func _draw_series(values: PackedFloat64Array, lo: float, hi: float, rect: Rect2,
 		if is_nan(v):
 			continue
 		pts.append(Vector2(x_origin + (float(i) - view_start + 0.5) * slot,
-				_map_y(v, lo, hi, rect)))
+				_price_y(v, lo, hi, rect)))
 	if pts.size() >= 2:
 		_canvas.draw_polyline(pts, _alpha(color, alpha), line_w, true)
 
@@ -1263,6 +1318,24 @@ static func _map_y(v: float, lo: float, hi: float, rect: Rect2) -> float:
 	if hi - lo <= 0.0000001:
 		return rect.position.y + rect.size.y * 0.5
 	return rect.position.y + rect.size.y * (1.0 - (v - lo) / (hi - lo))
+
+
+## Price-axis Y mapping honoring the log toggle (falls back to linear when
+## the visible range touches zero or below).
+func _price_y(v: float, lo: float, hi: float, rect: Rect2) -> float:
+	if _log_scale and lo > 0.0 and v > 0.0:
+		var llo := log(lo)
+		return rect.position.y + rect.size.y \
+				* (1.0 - (log(v) - llo) / maxf(log(hi) - llo, 0.0000001))
+	return _map_y(v, lo, hi, rect)
+
+
+## Inverse of the price mapping: data value at a pixel row.
+func _value_at_y(y: float, lo: float, hi: float, rect: Rect2) -> float:
+	var frac := clampf(1.0 - (y - rect.position.y) / maxf(rect.size.y, 0.0001), 0.0, 1.0)
+	if _log_scale and lo > 0.0:
+		return exp(lerp(log(lo), log(hi), frac))
+	return lo + (hi - lo) * frac
 
 
 func _alpha(c: Color, a: float) -> Color:

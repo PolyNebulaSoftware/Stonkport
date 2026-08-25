@@ -28,12 +28,12 @@ var _price_provider := func(asset: String) -> float: return MarketSimulator.get_
 
 func _ready() -> void:
 	title = "New Trade"
-	min_size = Vector2i(620, 0)
+	min_size = Vector2i(580, 0)
 	get_ok_button().hide()
 
 	var outer := VBoxContainer.new()
 	outer.add_theme_constant_override("separation", 8)
-	outer.custom_minimum_size = Vector2(580, 0)
+	outer.custom_minimum_size = Vector2(540, 0)
 	add_child(outer)
 
 	_summary_box = HBoxContainer.new()

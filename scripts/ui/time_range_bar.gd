@@ -25,8 +25,10 @@ func _ready() -> void:
 	vbox.add_theme_constant_override("separation", 4)
 	add_child(vbox)
 
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 6)
+	# Wraps chips/dates onto extra lines on narrow layouts.
+	var hbox := HFlowContainer.new()
+	hbox.add_theme_constant_override("h_separation", 6)
+	hbox.add_theme_constant_override("v_separation", 4)
 	vbox.add_child(hbox)
 
 	for preset in PRESETS:
@@ -170,7 +172,7 @@ func _deselect_chips() -> void:
 func _make_date_edit(placeholder := "YYYY-MM-DD") -> LineEdit:
 	var edit := LineEdit.new()
 	edit.placeholder_text = placeholder
-	edit.custom_minimum_size = Vector2(104, 0)
+	edit.custom_minimum_size = Vector2(92, 0)
 	edit.clear_button_enabled = true
 	edit.focus_mode = Control.FOCUS_CLICK
 	edit.text_changed.connect(_on_dates_edited)
