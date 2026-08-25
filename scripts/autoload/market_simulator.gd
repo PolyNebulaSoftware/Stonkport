@@ -11,15 +11,17 @@ const DEFAULT_INTERVAL_S := 5.0
 const TRADING_MINUTES_PER_DAY := 390.0
 
 const TIMEFRAME_SPECS := {
-	"1D": {"bars": 78, "minutes": 5},
-	"1W": {"bars": 65, "minutes": 30},
-	"1M": {"bars": 22, "minutes": 390},
-	"1Y": {"bars": 252, "minutes": 390},
+	"1m": {"bars": 120, "minutes": 1, "seconds": 60},
+	"5m": {"bars": 96, "minutes": 5, "seconds": 300},
+	"1h": {"bars": 90, "minutes": 60, "seconds": 3600},
+	"1d": {"bars": 120, "minutes": 390, "seconds": 86400},
+	"1w": {"bars": 104, "minutes": 1950, "seconds": 604800},
 }
 
 var universe: Dictionary = {}
 var current_prices: Dictionary = {}
 var prev_close: Dictionary = {}
+var live_quotes: Dictionary = {}
 var tick_count := 0
 
 var _rng := RandomNumberGenerator.new()
@@ -74,7 +76,26 @@ func tick() -> void:
 
 
 func get_price(ticker: String) -> float:
-	return float(current_prices.get(ticker, 0.0))
+	if current_prices.has(ticker):
+		return float(current_prices[ticker])
+	return float(live_quotes.get(ticker, 0.0))
+
+
+## Re-anchors a ticker to a live external quote (Yahoo Finance). Universe
+## tickers continue their random walk from the quoted price; unknown
+## tickers (e.g. imported ones) are served from [member live_quotes] only.
+func apply_live_quote(ticker: String, price: float, prev_px := 0.0) -> void:
+	if price <= 0.0:
+		return
+	live_quotes[ticker] = price
+	if current_prices.has(ticker):
+		current_prices[ticker] = price
+	if prev_px > 0.0:
+		prev_close[ticker] = prev_px
+	for key in _history_cache.keys():
+		if str(key).begins_with("%s|" % ticker):
+			_history_cache.erase(key)
+	price_updated.emit(ticker, price)
 
 
 func get_prev_close(ticker: String) -> float:
@@ -117,33 +138,46 @@ func get_top_movers(count: int) -> Array:
 ## Returns cached OHLCV bars for a ticker/timeframe; the last bar tracks the
 ## live price. Bars are generated deterministically per (ticker, timeframe)
 ## and anchored so the final close equals the current simulated price.
+## Unknown tickers (imported/custom assets) get a deterministic walk anchored
+## on their live quote so they still chart.
 func get_history(ticker: String, timeframe: String) -> Array:
-	if not universe.has(ticker):
-		return []
-	var spec: Dictionary = TIMEFRAME_SPECS.get(timeframe, TIMEFRAME_SPECS["1D"])
+	var spec: Dictionary = TIMEFRAME_SPECS.get(timeframe, TIMEFRAME_SPECS["5m"])
 	var key := "%s|%s" % [ticker, timeframe]
 	if not _history_cache.has(key):
-		_history_cache[key] = _generate_bars(ticker, int(spec["bars"]), float(spec["minutes"]))
+		if universe.has(ticker):
+			var info: Dictionary = universe[ticker]
+			var anchor := get_price(ticker)
+			if anchor <= 0.0:
+				anchor = float(info.get("base_price", 100.0))
+			_history_cache[key] = _synth_bars(hash("sim|%s" % ticker), anchor,
+					float(info.get("volatility", 0.02)),
+					int(spec["bars"]), float(spec["minutes"]))
+		else:
+			var custom_anchor := get_price(ticker)
+			if custom_anchor <= 0.0:
+				custom_anchor = 100.0
+			_history_cache[key] = _synth_bars(hash("custom|%s" % ticker),
+					custom_anchor, 0.035, int(spec["bars"]), float(spec["minutes"]))
 	var bars: Array = _history_cache[key]
 	if not bars.is_empty():
 		var live := get_price(ticker)
-		var last: Dictionary = bars[bars.size() - 1]
-		last["close"] = live
-		last["high"] = maxf(float(last["high"]), live)
-		last["low"] = minf(float(last["low"]), live)
+		if live > 0.0:
+			var last: Dictionary = bars[bars.size() - 1]
+			last["close"] = live
+			last["high"] = maxf(float(last["high"]), live)
+			last["low"] = minf(float(last["low"]), live)
 	return bars
 
 
-func _generate_bars(ticker: String, bar_count: int, minutes_per_bar: float) -> Array:
-	var info: Dictionary = universe[ticker]
-	var sigma_daily: float = float(info.get("volatility", 0.02))
+## Deterministic OHLCV random walk ending exactly on [param target].
+func _synth_bars(seed_key: int, target: float, sigma_daily: float,
+		bar_count: int, minutes_per_bar: float) -> Array:
 	var bar_sigma := sigma_daily * sqrt(minutes_per_bar / TRADING_MINUTES_PER_DAY)
 	var rng := RandomNumberGenerator.new()
-	rng.seed = hash("%s|%d|%f" % [ticker, bar_count, minutes_per_bar])
-	var target := get_price(ticker)
+	rng.seed = hash("%d|%d|%f" % [seed_key, bar_count, minutes_per_bar])
 
 	# Cumulative log-returns; anchoring subtracts the total so the final
-	# close lands exactly on the current price.
+	# close lands exactly on the target price.
 	var cum := PackedFloat64Array()
 	cum.resize(bar_count + 1)
 	cum[0] = 0.0
@@ -151,7 +185,7 @@ func _generate_bars(ticker: String, bar_count: int, minutes_per_bar: float) -> A
 		cum[i + 1] = cum[i] + rng.randfn(0.0, bar_sigma)
 	var total := cum[bar_count]
 
-	var base_volume := maxf(float(info.get("base_price", 100.0)) * 25000.0, 100000.0)
+	var base_volume := maxf(target * 25000.0, 100000.0)
 	var bars: Array = []
 	for i in bar_count:
 		var open := target * exp(cum[i] - total)

@@ -259,6 +259,7 @@ func set_currency(code: String) -> void:
 
 func _sync_currency_symbol() -> void:
 	Utils.currency_symbol = Utils.CURRENCIES.get(str(settings.get("currency", "USD")), "$")
+	Utils.currency_rate = float(Utils.USD_RATES.get(str(settings.get("currency", "USD")), 1.0))
 
 
 ## Recomputes state/opened_at/closed_at from the log list.

@@ -27,7 +27,7 @@ const MENU_SHOW_WINDOW := 1
 const MENU_QUIT := 2
 const OPEN_DEBOUNCE_MSEC := 1500
 
-const BANNER_DURATION_SEC := 3.0
+const BANNER_DURATION_SEC := 2.0
 const BANNER_SIZE := Vector2i(420, 132)
 const BANNER_BG := Color(0.0509804, 0.0666667, 0.0901961)
 const BANNER_FG := Color(0.902, 0.929, 0.953)
@@ -138,6 +138,8 @@ func _run_startup_banner() -> void:
 	if not _banner_active:
 		return  # closed early (Alt+F4); _notification already restored + hid us
 	_end_banner_and_restore()
+	if OS.has_feature("editor"):
+		return  # editor runs keep the main window on screen; no tray drop
 	_hide_to_tray()
 
 

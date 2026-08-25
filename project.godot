@@ -23,6 +23,7 @@ config/features/Packed/disable_splash_screen=true
 
 MarketSimulator="*res://scripts/autoload/market_simulator.gd"
 TradeManager="*res://scripts/autoload/trade_manager.gd"
+YFinance="*res://scripts/net/yfinance_client.gd"
 TrayLauncher="*res://scripts/tray/tray_launcher.gd"
 
 [display]

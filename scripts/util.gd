@@ -27,6 +27,20 @@ const CURRENCIES := {
 
 static var currency_symbol := "$"
 
+## USD→currency factors kept beside the display symbols above. Live feeds
+## (Yahoo/Binance) are USD-denominated; charts rescale through these.
+const USD_RATES := {
+	"USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 149.5,
+	"CNY": 7.15, "CAD": 1.36, "AUD": 1.51, "CHF": 0.88,
+}
+
+static var currency_rate := 1.0
+
+
+## Converts a USD-denominated amount into the active display currency.
+static func from_usd(value: float) -> float:
+	return value * currency_rate
+
 
 ## Formats a value with the active currency symbol, e.g. "$1,234.56";
 ## with signed=true → "+$1,234.56" / "-$1,234.56".

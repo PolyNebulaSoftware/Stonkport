@@ -6,6 +6,7 @@ const NavRailScene := preload("res://scenes/nav_rail.tscn")
 const RangeBarScene := preload("res://scenes/time_range_bar.tscn")
 const DashboardScene := preload("res://scenes/dashboard.tscn")
 const TradesScene := preload("res://scenes/trades_screen.tscn")
+const AnalyzeScene := preload("res://scenes/analyze_screen.tscn")
 const SettingsScene := preload("res://scenes/settings_screen.tscn")
 
 var _rail: Control
@@ -38,6 +39,7 @@ func _ready() -> void:
 	_screens = {
 		"dashboard": DashboardScene.instantiate(),
 		"trades": TradesScene.instantiate(),
+		"analyze": AnalyzeScene.instantiate(),
 		"settings": SettingsScene.instantiate(),
 	}
 	for id in _screens:
@@ -55,7 +57,7 @@ func _select(id: String) -> void:
 	_current = id
 	for key in _screens:
 		_screens[key].visible = key == id
-	_bar.visible = id != "settings"
+	_bar.visible = id != "settings" and id != "analyze"
 	_push_range()
 
 
