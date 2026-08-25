@@ -142,6 +142,8 @@ func _refresh() -> void:
 			continue
 		if query != "" and not str(t.get("asset", "")).contains(query):
 			continue
+		if not TradeMetrics.in_range(t, _min_ts, _max_ts):
+			continue
 		rows.append(t)
 	rows.sort_custom(func(a, b): return TradeMetrics.last_activity(a) > TradeMetrics.last_activity(b))
 

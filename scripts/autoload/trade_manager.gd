@@ -64,7 +64,7 @@ func remaining_quantity(trade: Dictionary) -> float:
 ## All return "" on success or a user-facing error message.
 
 
-func create_trade(asset: String, asset_type: String, direction: String, qty: float, price: float, fee: float, opened_at: int, notes := "") -> String:
+func create_trade(asset: String, asset_type: String, direction: String, notes: String, logs: Array) -> String:
 	asset = asset.strip_edges().to_upper()
 	if asset.is_empty():
 		return "Asset identifier is required."
@@ -72,29 +72,52 @@ func create_trade(asset: String, asset_type: String, direction: String, qty: flo
 		return "Unknown asset type."
 	if not direction in ["long", "short"]:
 		return "Unknown direction."
-	if qty <= 0.0:
-		return "Quantity must be positive."
-	if price <= 0.0:
-		return "Price must be positive."
-	if fee < 0.0:
-		return "Fee cannot be negative."
-	if opened_at <= 0:
-		return "Opening date is invalid."
+	var cleaned: Variant = _validated_logs(logs)
+	if cleaned is String:
+		return cleaned
 	var trade := {
 		"id": _new_id(),
 		"asset": asset,
 		"asset_type": asset_type,
 		"direction": direction,
 		"state": "open",
-		"opened_at": opened_at,
+		"opened_at": 0,
 		"closed_at": 0,
 		"notes": notes,
-		"logs": [{"ts": opened_at, "action": "open", "qty": qty, "price": price, "fee": fee}],
+		"logs": cleaned,
 	}
+	_refresh_state(trade)
 	trades.append(trade)
 	save()
 	trades_changed.emit()
 	return ""
+
+
+## Validates raw log dictionaries; returns a cleaned, time-sorted copy or an
+## error message string.
+func _validated_logs(logs: Array) -> Variant:
+	if logs.is_empty():
+		return "A trade needs at least one log entry."
+	var cleaned: Array = []
+	for log in logs:
+		var action := str(log.get("action", ""))
+		var qty := float(log.get("qty", 0.0))
+		var price := float(log.get("price", 0.0))
+		var fee := float(log.get("fee", 0.0))
+		var ts := int(log.get("ts", 0))
+		if not action in ACTIONS:
+			return "Unknown log action."
+		if qty <= 0.0:
+			return "Quantity must be positive."
+		if price <= 0.0:
+			return "Price must be positive."
+		if fee < 0.0:
+			return "Fee cannot be negative."
+		if ts <= 0:
+			return "Date is invalid."
+		cleaned.append({"ts": ts, "action": action, "qty": qty, "price": price, "fee": fee})
+	cleaned.sort_custom(func(a, b): return int(a.get("ts", 0)) < int(b.get("ts", 0)))
+	return cleaned
 
 
 func append_log(id: String, action: String, qty: float, price: float, fee: float, ts: int) -> String:
@@ -136,6 +159,21 @@ func remove_log(id: String, index: int) -> String:
 	if logs.size() == 1:
 		return "Cannot remove the only log of a trade."
 	logs.remove_at(index)
+	_refresh_state(t)
+	save()
+	trades_changed.emit()
+	return ""
+
+
+## Replaces the full log list (spreadsheet editor); recomputes trade state.
+func set_logs(id: String, logs: Array) -> String:
+	var t := get_trade(id)
+	if t.is_empty():
+		return "Trade not found."
+	var cleaned: Variant = _validated_logs(logs)
+	if cleaned is String:
+		return cleaned
+	t["logs"] = cleaned
 	_refresh_state(t)
 	save()
 	trades_changed.emit()

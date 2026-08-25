@@ -1,23 +1,26 @@
 extends AcceptDialog
-## Create/edit trade dialog. Create mode collects the opening log; edit mode
-## manages metadata plus the full log list (add/reduce/close entries).
+## Create/edit trade dialog. Both modes share one metadata row (Asset / Type /
+## Direction), a spreadsheet-style log grid (Action / Time / Quantity / Price /
+## Fee) with a trailing "+" row, and notes pinned to the bottom.
 
 const TYPE_NAMES := ["stock", "crypto", "custom", "option"]
 const DIR_NAMES := ["long", "short"]
-const LOG_ACTIONS := ["add", "reduce", "close"]
+const LOG_ACTIONS := ["open", "add", "reduce", "close"]
+const ROW_KEYS := ["action", "time", "qty", "price", "fee", "x"]
 
 var _mode := "create"
 var _trade_id := ""
 var _armed_delete := false
 
-var _create_box: VBoxContainer
-var _edit_box: VBoxContainer
-var _f := {}       # create-mode fields
-var _m := {}       # edit-mode meta fields
-var _log_form := {}
 var _summary_box: HBoxContainer
-var _logs_box: VBoxContainer
+var _meta := {}            # shared Asset / Type / Direction controls
+var _log_grid: GridContainer
+var _log_rows: Array = []  # per-row control dictionaries
+var _plus_cells: Array = []
+var _notes: LineEdit
 var _error: Label
+var _create_buttons: Control
+var _edit_buttons: Control
 var _delete_btn: Button
 
 var _price_provider := func(asset: String) -> float: return MarketSimulator.get_price(asset)
@@ -33,8 +36,16 @@ func _ready() -> void:
 	outer.custom_minimum_size = Vector2(580, 0)
 	add_child(outer)
 
-	outer.add_child(_build_create_box())
-	outer.add_child(_build_edit_box())
+	_summary_box = HBoxContainer.new()
+	_summary_box.add_theme_constant_override("separation", 6)
+	outer.add_child(_summary_box)
+
+	outer.add_child(_build_meta_row())
+	_build_log_section(outer)
+
+	_notes = LineEdit.new()
+	_notes.placeholder_text = "Optional notes"
+	_form_row(outer, "Notes", _notes, 380)
 
 	_error = Label.new()
 	_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -42,207 +53,292 @@ func _ready() -> void:
 	_error.visible = false
 	outer.add_child(_error)
 
-	TradeManager.trades_changed.connect(_on_trades_changed)
-
-
-# --- Create mode -------------------------------------------------------------
-
-
-func _build_create_box() -> Control:
-	_create_box = VBoxContainer.new()
-	_create_box.add_theme_constant_override("separation", 6)
-
-	_f.asset = LineEdit.new()
-	_f.asset.placeholder_text = "GLD"
-	_form_row(_create_box, "Asset", _f.asset, 180)
-
-	_f.type = OptionButton.new()
-	for item in ["Stock", "Crypto", "Custom", "Option"]:
-		_f.type.add_item(item)
-	_form_row(_create_box, "Type", _f.type, 180)
-
-	_f.dir = OptionButton.new()
-	_f.dir.add_item("Long")
-	_f.dir.add_item("Short")
-	_form_row(_create_box, "Direction", _f.dir, 180)
-
-	_f.qty = _spin(0.0, 1000000000.0, 0.00000001)
-	_form_row(_create_box, "Quantity", _f.qty, 140)
-
-	_f.price = _spin(0.0, 10000000.0, 0.01)
-	_form_row(_create_box, "Entry price", _f.price, 140)
-
-	_f.fee = _spin(0.0, 100000.0, 0.01)
-	_form_row(_create_box, "Fee", _f.fee, 140)
-
-	_f.opened = LineEdit.new()
-	_f.opened.placeholder_text = "YYYY-MM-DD"
-	_form_row(_create_box, "Opened", _f.opened, 140)
-
-	_f.notes = LineEdit.new()
-	_f.notes.placeholder_text = "Optional notes"
-	_form_row(_create_box, "Notes", _f.notes, 380)
-
-	_create_box.add_child(_button_row([
+	_create_buttons = _button_row([
 		{"text": "Cancel", "action": hide},
 		{"text": "Create Trade", "action": _submit_create, "primary": true},
-	]))
-	return _create_box
-
-
-func _submit_create() -> void:
-	var ts := Utils.parse_date(_f.opened.text)
-	if ts <= 0:
-		_show_error("Opening date must be a valid YYYY-MM-DD value.")
-		return
-	var err := TradeManager.create_trade(
-			_f.asset.text, TYPE_NAMES[_f.type.selected], DIR_NAMES[_f.dir.selected],
-			float(_f.qty.value), float(_f.price.value), float(_f.fee.value), ts,
-			_f.notes.text)
-	if err != "":
-		_show_error(err)
-		return
-	hide()
-
-
-# --- Edit mode ---------------------------------------------------------------
-
-
-func _build_edit_box() -> Control:
-	_edit_box = VBoxContainer.new()
-	_edit_box.add_theme_constant_override("separation", 8)
-
-	_summary_box = HBoxContainer.new()
-	_summary_box.add_theme_constant_override("separation", 6)
-	_edit_box.add_child(_summary_box)
-
-	_m.asset = LineEdit.new()
-	_m.asset.placeholder_text = "GLD"
-	_form_row(_edit_box, "Asset", _m.asset, 180)
-
-	_m.type = OptionButton.new()
-	for item in ["Stock", "Crypto", "Custom", "Option"]:
-		_m.type.add_item(item)
-	_form_row(_edit_box, "Type", _m.type, 180)
-
-	_m.dir = OptionButton.new()
-	_m.dir.add_item("Long")
-	_m.dir.add_item("Short")
-	_form_row(_edit_box, "Direction", _m.dir, 180)
-
-	_m.notes = LineEdit.new()
-	_m.notes.placeholder_text = "Optional notes"
-	_form_row(_edit_box, "Notes", _m.notes, 380)
-
-	var logs_caption := Label.new()
-	logs_caption.text = "Logs"
-	logs_caption.add_theme_font_size_override("font_size", 13)
-	_edit_box.add_child(logs_caption)
-
-	var hint := Label.new()
-	hint.text = "Chronological entries. Close logs realize P/L."
-	hint.add_theme_font_size_override("font_size", 11)
-	hint.add_theme_color_override("font_color", Utils.MUTED)
-	_edit_box.add_child(hint)
-
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(0, 130)
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_edit_box.add_child(scroll)
-
-	_logs_box = VBoxContainer.new()
-	_logs_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_logs_box.add_theme_constant_override("separation", 2)
-	scroll.add_child(_logs_box)
-
-	_build_log_form()
+	])
+	outer.add_child(_create_buttons)
 
 	_delete_btn = Button.new()
 	_delete_btn.text = "Delete"
 	_delete_btn.focus_mode = Control.FOCUS_NONE
 	_delete_btn.pressed.connect(_on_delete_pressed)
 
-	_edit_box.add_child(_button_row([
+	_edit_buttons = _button_row([
 		{"text": "", "action": func(): pass, "custom": _delete_btn},
 		{"text": "Cancel", "action": hide},
 		{"text": "Save Changes", "action": _submit_save, "primary": true},
-	]))
-	return _edit_box
+	])
+	outer.add_child(_edit_buttons)
+
+	TradeManager.trades_changed.connect(_on_trades_changed)
 
 
-func _build_log_form() -> void:
-	var form := HBoxContainer.new()
-	form.add_theme_constant_override("separation", 6)
+# --- Metadata row ------------------------------------------------------------
 
-	_log_form.action = OptionButton.new()
-	for item in ["Add", "Reduce", "Close"]:
-		_log_form.action.add_item(item)
-	_log_form.action.custom_minimum_size = Vector2(92, 0)
-	_log_form.action.item_selected.connect(func(_i: int): _prefill_exit())
-	form.add_child(_log_form.action)
 
-	_log_form.qty = _spin(0.0, 1000000000.0, 0.00000001)
-	_log_form.qty.custom_minimum_size = Vector2(84, 0)
-	form.add_child(_log_form.qty)
+func _build_meta_row() -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
 
-	_log_form.price = _spin(0.0, 10000000.0, 0.01)
-	_log_form.price.custom_minimum_size = Vector2(104, 0)
-	form.add_child(_log_form.price)
+	_meta.asset = LineEdit.new()
+	_meta.asset.placeholder_text = "GLD"
+	_meta.asset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(_caption("Asset"))
+	row.add_child(_meta.asset)
 
-	_log_form.fee = _spin(0.0, 100000.0, 0.01)
-	_log_form.fee.custom_minimum_size = Vector2(84, 0)
-	form.add_child(_log_form.fee)
+	_meta.type = OptionButton.new()
+	for item in ["Stock", "Crypto", "Custom", "Option"]:
+		_meta.type.add_item(item)
+	_meta.type.custom_minimum_size = Vector2(100, 0)
+	row.add_child(_caption("Type"))
+	row.add_child(_meta.type)
 
-	_log_form.date = LineEdit.new()
-	_log_form.date.placeholder_text = "YYYY-MM-DD"
-	_log_form.date.custom_minimum_size = Vector2(112, 0)
-	form.add_child(_log_form.date)
+	_meta.dir = OptionButton.new()
+	_meta.dir.add_item("Long")
+	_meta.dir.add_item("Short")
+	_meta.dir.custom_minimum_size = Vector2(86, 0)
+	row.add_child(_caption("Direction"))
+	row.add_child(_meta.dir)
+	return row
+
+
+func _caption(text: String) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_color_override("font_color", Utils.MUTED)
+	return label
+
+
+# --- Log grid ----------------------------------------------------------------
+
+
+func _build_log_section(parent: Control) -> void:
+	var logs_caption := Label.new()
+	logs_caption.text = "Logs"
+	logs_caption.add_theme_font_size_override("font_size", 13)
+	parent.add_child(logs_caption)
+
+	var hint := Label.new()
+	hint.text = "One entry per row, sorted by time. Close entries realize P/L."
+	hint.add_theme_font_size_override("font_size", 11)
+	hint.add_theme_color_override("font_color", Utils.MUTED)
+	parent.add_child(hint)
+
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0, 150)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	parent.add_child(scroll)
+
+	_log_grid = GridContainer.new()
+	_log_grid.columns = 6
+	_log_grid.add_theme_constant_override("h_separation", 6)
+	_log_grid.add_theme_constant_override("v_separation", 4)
+	_log_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_log_grid)
+
+	for col in ["Action", "Time", "Quantity", "Price", "Fee", ""]:
+		var head := Label.new()
+		head.text = col
+		head.add_theme_font_size_override("font_size", 11)
+		head.add_theme_color_override("font_color", Utils.MUTED)
+		_log_grid.add_child(head)
 
 	var add_btn := Button.new()
-	add_btn.text = "Add"
+	add_btn.text = "+"
+	add_btn.tooltip_text = "Add log entry"
 	add_btn.focus_mode = Control.FOCUS_NONE
-	add_btn.pressed.connect(_on_add_log)
-	form.add_child(add_btn)
+	add_btn.custom_minimum_size = Vector2(26, 26)
+	add_btn.pressed.connect(_on_add_row)
+	_plus_cells = [add_btn]
+	for i in 5:
+		var spacer := Control.new()
+		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_plus_cells.append(spacer)
+	_restack_plus_row()
 
-	_edit_box.add_child(form)
+
+func _add_log_row(data := {}) -> Dictionary:
+	var row := {}
+
+	var action := OptionButton.new()
+	for i in LOG_ACTIONS.size():
+		action.add_item(LOG_ACTIONS[i].capitalize())
+	action.selected = clampi(LOG_ACTIONS.find(str(data.get("action", "open"))), 0, LOG_ACTIONS.size() - 1)
+	action.custom_minimum_size = Vector2(92, 0)
+	action.item_selected.connect(_on_action_selected.bind(row))
+	row.action = action
+
+	row.time = LineEdit.new()
+	row.time.placeholder_text = "YYYY-MM-DD"
+	row.time.custom_minimum_size = Vector2(112, 0)
+	var ts := int(data.get("ts", 0))
+	if ts > 0:
+		row.time.text = Utils.date_str(ts)
+
+	row.qty = _num_edit(_num_text(float(data.get("qty", 0.0))), "0", 84)
+	row.price = _num_edit(_num_text(float(data.get("price", 0.0))), "0.00", 104)
+	row.fee = _num_edit(_num_text(float(data.get("fee", 0.0))), "0", 76)
+	for key in ["time", "qty", "price", "fee"]:
+		row[key].text_changed.connect(_filter_numeric.bind(row[key]))
+
+	var remove_btn := Button.new()
+	remove_btn.text = "x"
+	remove_btn.tooltip_text = "Remove this entry"
+	remove_btn.focus_mode = Control.FOCUS_NONE
+	remove_btn.custom_minimum_size = Vector2(26, 26)
+	remove_btn.add_theme_font_size_override("font_size", 11)
+	remove_btn.pressed.connect(_on_remove_row.bind(row))
+	row.x = remove_btn
+
+	_log_rows.append(row)
+	for key in ROW_KEYS:
+		_log_grid.add_child(row[key])
+	_restack_plus_row()
+	return row
 
 
-func _log_action() -> String:
-	return LOG_ACTIONS[_log_form.action.selected]
+## Keeps the "+" row as the last row of the grid.
+func _restack_plus_row() -> void:
+	for cell in _plus_cells:
+		if cell.get_parent() == null:
+			_log_grid.add_child(cell)
+	for cell in _plus_cells:
+		_log_grid.move_child(cell, _log_grid.get_child_count() - 1)
+
+
+func _on_add_row() -> void:
+	_add_log_row()
+
+
+func _on_remove_row(row: Dictionary) -> void:
+	_log_rows.erase(row)
+	_drop_row(row)
+
+
+func _drop_row(row: Dictionary) -> void:
+	for key in ROW_KEYS:
+		var cell: Control = row.get(key)
+		if cell != null:
+			_log_grid.remove_child(cell)
+			cell.queue_free()
+
+
+func _reset_log_rows(rows_data: Array) -> void:
+	for row in _log_rows:
+		_drop_row(row)
+	_log_rows.clear()
+	for data in rows_data:
+		_add_log_row(data)
 
 
 ## Prefills quantity/price when an exit action is picked.
-func _prefill_exit() -> void:
-	var action := _log_action()
-	if action == "add":
+func _on_action_selected(index: int, row: Dictionary) -> void:
+	var action: String = LOG_ACTIONS[index]
+	if not action in ["reduce", "close"] or _trade_id.is_empty():
 		return
 	var t := TradeManager.get_trade(_trade_id)
 	if t.is_empty():
 		return
 	if action == "close":
-		_log_form.qty.value = TradeManager.remaining_quantity(t)
+		row.qty.text = _num_text(TradeManager.remaining_quantity(t))
 	var mark := TradeManager.get_mark_price(t)
-	if mark > 0.0:
-		_log_form.price.value = mark
+	if mark > 0.0 and row.price.text.strip_edges().is_empty():
+		row.price.text = _num_text(mark)
 
 
-func _on_add_log() -> void:
-	var ts := Utils.parse_date(_log_form.date.text)
-	if ts <= 0:
-		ts = int(Time.get_unix_time_from_system())
-	var err := TradeManager.append_log(_trade_id, _log_action(),
-			float(_log_form.qty.value), float(_log_form.price.value),
-			float(_log_form.fee.value), ts)
+func _filter_numeric(new_text: String, edit: LineEdit) -> void:
+	var filtered := ""
+	for ch in new_text:
+		if (ch >= "0" and ch <= "9") or ch == "." or ch == "-":
+			filtered += ch
+	if filtered != new_text:
+		edit.text = filtered
+		edit.caret_column = filtered.length()
+
+
+func _num_edit(text: String, placeholder: String, width: float) -> LineEdit:
+	var edit := LineEdit.new()
+	edit.text = text
+	edit.placeholder_text = placeholder
+	edit.custom_minimum_size = Vector2(width, 0)
+	return edit
+
+
+func _num_text(value: float) -> String:
+	var text := "%.8f" % value
+	while text.ends_with("0"):
+		text = text.substr(0, text.length() - 1)
+	return text.rstrip(".")
+
+
+func _parse_num(text: String) -> float:
+	return text.strip_edges().replace(",", "").to_float()
+
+
+## Reads the grid into validated log dicts. Returns an Array or a String error.
+func _gather_logs() -> Variant:
+	var logs: Array = []
+	for i in _log_rows.size():
+		var row: Dictionary = _log_rows[i]
+		var n := i + 1
+		var ts := Utils.parse_date(row.time.text)
+		if ts <= 0:
+			return "Row %d: time must be a valid YYYY-MM-DD value." % n
+		var qty := _parse_num(row.qty.text)
+		if qty <= 0.0:
+			return "Row %d: quantity must be positive." % n
+		var price := _parse_num(row.price.text)
+		if price <= 0.0:
+			return "Row %d: price must be positive." % n
+		var fee := _parse_num(row.fee.text)
+		if fee < 0.0:
+			return "Row %d: fee cannot be negative." % n
+		logs.append({
+			"ts": ts,
+			"action": LOG_ACTIONS[int(row.action.selected)],
+			"qty": qty,
+			"price": price,
+			"fee": fee,
+		})
+	return logs
+
+
+# --- Submit ------------------------------------------------------------------
+
+
+func _submit_create() -> void:
+	var logs: Variant = _gather_logs()
+	if logs is String:
+		_show_error(logs)
+		return
+	var err := TradeManager.create_trade(_meta.asset.text,
+			TYPE_NAMES[_meta.type.selected], DIR_NAMES[_meta.dir.selected],
+			_notes.text, logs)
 	if err != "":
 		_show_error(err)
-	else:
-		_clear_error()
+		return
+	hide()
 
 
-func _on_remove_log(index: int) -> void:
-	var err := TradeManager.remove_log(_trade_id, index)
+func _submit_save() -> void:
+	if _meta.asset.text.strip_edges().to_upper().is_empty():
+		_show_error("Asset identifier is required.")
+		return
+	var logs: Variant = _gather_logs()
+	if logs is String:
+		_show_error(logs)
+		return
+	var err := TradeManager.set_logs(_trade_id, logs)
 	if err != "":
 		_show_error(err)
+		return
+	err = TradeManager.update_meta(_trade_id, _meta.asset.text,
+			TYPE_NAMES[_meta.type.selected], DIR_NAMES[_meta.dir.selected], _notes.text)
+	if err != "":
+		_show_error(err)
+		return
+	hide()
 
 
 func _on_delete_pressed() -> void:
@@ -258,74 +354,7 @@ func _on_delete_pressed() -> void:
 	hide()
 
 
-func _submit_save() -> void:
-	var err := TradeManager.update_meta(_trade_id, _m.asset.text,
-			TYPE_NAMES[_m.type.selected], DIR_NAMES[_m.dir.selected], _m.notes.text)
-	if err != "":
-		_show_error(err)
-		return
-	hide()
-
-
-# --- Log list rendering ------------------------------------------------------
-
-
-func _reload_logs() -> void:
-	for child in _logs_box.get_children():
-		child.queue_free()
-	var t := TradeManager.get_trade(_trade_id)
-	if t.is_empty():
-		return
-	var logs: Array = t.get("logs", [])
-	for i in logs.size():
-		_logs_box.add_child(_make_log_row(i, logs[i]))
-	_reload_summary(t)
-
-
-func _make_log_row(index: int, log: Dictionary) -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-
-	var colors := {
-		"open": Utils.ACCENT,
-		"add": Utils.GREEN,
-		"reduce": Utils.ORANGE,
-		"close": Utils.RED,
-	}
-	var action := str(log.get("action", ""))
-	row.add_child(_badge(action.to_upper(), colors.get(action, Utils.MUTED)))
-
-	var date_label := Label.new()
-	date_label.text = Utils.datetime_str(int(log.get("ts", 0)))
-	date_label.add_theme_font_size_override("font_size", 11)
-	date_label.add_theme_color_override("font_color", Utils.MUTED)
-	row.add_child(date_label)
-
-	var main := Label.new()
-	main.text = "%s @ %s" % [Utils.qty(float(log.get("qty", 0.0))), Utils.money(float(log.get("price", 0.0)))]
-	main.add_theme_font_size_override("font_size", 12)
-	row.add_child(main)
-
-	var fee := Label.new()
-	fee.text = "fee %s" % Utils.money(float(log.get("fee", 0.0)))
-	fee.add_theme_font_size_override("font_size", 11)
-	fee.add_theme_color_override("font_color", Utils.MUTED)
-	row.add_child(fee)
-
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(spacer)
-
-	var remove_btn := Button.new()
-	remove_btn.text = "x"
-	remove_btn.tooltip_text = "Remove this log entry"
-	remove_btn.focus_mode = Control.FOCUS_NONE
-	remove_btn.custom_minimum_size = Vector2(26, 26)
-	remove_btn.add_theme_font_size_override("font_size", 11)
-	remove_btn.pressed.connect(_on_remove_log.bind(index))
-	row.add_child(remove_btn)
-	return row
+# --- Summary rendering -------------------------------------------------------
 
 
 func _reload_summary(trade: Dictionary) -> void:
@@ -359,14 +388,15 @@ func open_create() -> void:
 	_mode = "create"
 	_trade_id = ""
 	title = "New Trade"
-	_f.asset.text = ""
-	_f.type.selected = 0
-	_f.dir.selected = 0
-	_f.qty.value = 1.0
-	_f.price.value = 0.0
-	_f.fee.value = 0.0
-	_f.opened.text = Utils.date_str(int(Time.get_unix_time_from_system()))
-	_f.notes.text = ""
+	_meta.asset.text = ""
+	_meta.type.selected = 0
+	_meta.dir.selected = 0
+	_notes.text = ""
+	_reset_log_rows([{
+		"action": "open",
+		"ts": int(Time.get_unix_time_from_system()),
+		"qty": 1.0,
+	}])
 	_apply_mode()
 	popup_centered()
 
@@ -378,10 +408,10 @@ func open_edit(id: String) -> void:
 	_mode = "edit"
 	_trade_id = id
 	title = "Edit - %s" % str(t.get("asset", "?"))
-	_m.asset.text = str(t.get("asset", ""))
-	_m.type.selected = TYPE_NAMES.find(str(t.get("asset_type", "stock")))
-	_m.dir.selected = DIR_NAMES.find(str(t.get("direction", "long")))
-	_m.notes.text = str(t.get("notes", ""))
+	_meta.asset.text = str(t.get("asset", ""))
+	_meta.type.selected = TYPE_NAMES.find(str(t.get("asset_type", "stock")))
+	_meta.dir.selected = DIR_NAMES.find(str(t.get("direction", "long")))
+	_notes.text = str(t.get("notes", ""))
 	_armed_delete = false
 	_delete_btn.text = "Delete"
 	_delete_btn.remove_theme_color_override("font_color")
@@ -390,9 +420,18 @@ func open_edit(id: String) -> void:
 	popup_centered()
 
 
+func _reload_logs() -> void:
+	var t := TradeManager.get_trade(_trade_id)
+	if t.is_empty():
+		return
+	_reset_log_rows(t.get("logs", []))
+	_reload_summary(t)
+
+
 func _apply_mode() -> void:
-	_create_box.visible = _mode == "create"
-	_edit_box.visible = _mode == "edit"
+	_summary_box.visible = _mode == "edit"
+	_create_buttons.visible = _mode == "create"
+	_edit_buttons.visible = _mode == "edit"
 	_clear_error()
 
 
@@ -454,15 +493,6 @@ func _badge(text: String, fg: Color) -> Label:
 			Utils.flat_style(Color(fg.r, fg.g, fg.b, 0.16), Color.TRANSPARENT, 4, 6, 1))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
-
-
-func _spin(min_value: float, max_value: float, step: float) -> SpinBox:
-	var spin := SpinBox.new()
-	spin.min_value = min_value
-	spin.max_value = max_value
-	spin.step = step
-	spin.value = 0.0
-	return spin
 
 
 func _show_error(message: String) -> void:
