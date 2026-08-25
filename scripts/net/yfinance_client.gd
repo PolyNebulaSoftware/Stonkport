@@ -4,6 +4,9 @@ extends Node
 ## yfinance library wraps; cookies + crumb session bootstrapped like
 ## yfinance does, with one session-rebuild retry per refused cycle).
 ## Crypto comes from Binance's public data API (data-api.binance.vision).
+## Web builds cannot reach Yahoo directly (no CORS headers, no cookie
+## access), so there stock symbols ride public CORS proxies via Yahoo's
+## batched "spark" endpoint, rotating proxies when a whole cycle is refused.
 ## Fetches happen once on load and whenever TradeManager emits a save;
 ## overlapping refreshes coalesce into one.
 
@@ -11,6 +14,18 @@ const CHART_URL := "https://query1.finance.yahoo.com/v8/finance/chart/%s?interva
 const CRUMB_URL := "https://query1.finance.yahoo.com/v1/test/getcrumb"
 const COOKIE_SEED_URL := "https://finance.yahoo.com/"
 const BINANCE_TICKER_URL := "https://data-api.binance.vision/api/v3/ticker/24hr?symbol=%s"
+# Web-only plumbing: browsers block query1.finance.yahoo.com (no CORS
+# headers) and hide Set-Cookie, so requests are relayed through public CORS
+# proxies against the batched spark endpoint instead of one chart call per
+# symbol. Proxies rotate whenever an entire cycle comes back refused.
+const WEB_SPARK_URL := "https://query1.finance.yahoo.com/v8/finance/spark?symbols=%s&range=1d&interval=1d"
+const CORS_PROXIES := [
+	"https://api.allorigins.win/raw?url=%s",
+	"https://api.codetabs.com/v1/proxy/?quest=%s",
+	"https://corsproxy.io/?url=%s",
+]
+const WEB_SYMBOLS_PER_BATCH := 10
+const WEB_STAGGER_SEC := 0.4
 const REQUEST_TIMEOUT_S := 8.0
 const MAX_SYMBOLS_PER_REFRESH := 24
 const FX_REFRESH_SEC := 3600.0
@@ -34,6 +49,9 @@ var _bootstrapping := false
 var _current_symbols: Array = []
 var _succeeded := 0
 var _cycle_retried := false
+
+var _is_web := OS.has_feature("web")
+var _proxy_index := 0     # active CORS_PROXIES entry (web builds only)
 
 
 func _ready() -> void:
@@ -71,12 +89,12 @@ func request_refresh() -> void:
 		else:
 			stocks.append(entry)
 	if stocks.is_empty():
+		_refreshing = false
 		return
 	_current_symbols = stocks
 	if not _session_ready:
 		await _bootstrap_session()
-	for entry in stocks:
-		_fetch_quote(str(entry[0]), str(entry[1]))
+	_fetch_stocks(stocks)
 
 
 ## Returns [[asset, symbol, kind], ...] sorted by symbol. Only asset types
@@ -142,6 +160,92 @@ func _on_quote_response(result: int, code: int, _headers: PackedStringArray,
 	_release_request(asset, http)
 
 
+# --- Web stock batches (CORS-proxied spark) ----------------------------------
+
+
+## Fires quote requests for stock entries: batched spark calls relayed
+## through the active CORS proxy on the web, one chart request per symbol
+## elsewhere.
+func _fetch_stocks(stocks: Array) -> void:
+	if not _is_web:
+		for entry in stocks:
+			_fetch_quote(str(entry[0]), str(entry[1]))
+		return
+	var batch: Array = []
+	for entry in stocks:
+		batch.append(entry)
+		if batch.size() < WEB_SYMBOLS_PER_BATCH:
+			continue
+		_fetch_spark_batch(batch)
+		batch = []
+		await get_tree().create_timer(WEB_STAGGER_SEC).timeout
+	if not batch.is_empty():
+		_fetch_spark_batch(batch)
+
+
+## Requests one spark payload covering every symbol in [param batch].
+func _fetch_spark_batch(batch: Array) -> void:
+	var symbols := PackedStringArray()
+	for entry in batch:
+		_pending[str(entry[0])] = true
+		if not symbols.has(str(entry[1])):
+			symbols.append(str(entry[1]))
+	var http := HTTPRequest.new()
+	http.timeout = REQUEST_TIMEOUT_S
+	add_child(http)
+	http.request_completed.connect(_on_spark_batch_response.bind(batch.duplicate(), http))
+	var err := http.request(_proxied(WEB_SPARK_URL % ",".join(symbols)))
+	if err != OK:
+		push_warning("YFinance: could not start spark request (%d)" % err)
+		for entry in batch:
+			_release_request(str(entry[0]), http)
+
+
+func _on_spark_batch_response(result: int, code: int, _headers: PackedStringArray,
+		body: PackedByteArray, batch: Array, http: HTTPRequest) -> void:
+	var quotes := {}
+	if result == HTTPRequest.RESULT_SUCCESS and code == HTTPClient.RESPONSE_OK:
+		quotes = _parse_spark(body)
+	else:
+		push_warning("YFinance: spark request failed (result=%d, http=%d)" % [result, code])
+	var missing: Array = []
+	for entry in batch:
+		var asset := str(entry[0])
+		var quote: Dictionary = quotes.get(str(entry[1]), {})
+		if float(quote.get("price", 0.0)) > 0.0:
+			_succeeded += 1
+			MarketSimulator.apply_live_quote(asset, float(quote["price"]),
+					float(quote.get("prev_close", 0.0)))
+		else:
+			missing.append(str(entry[1]))
+		_release_request(asset, http)
+	if not missing.is_empty():
+		push_warning("YFinance: no price in response for %s" % ", ".join(missing))
+
+
+## Extracts {symbol: {"price", "prev_close"}} from a spark payload, which is
+## a flat {SYMBOL: {...}} map whose entries end in a "close" series.
+func _parse_spark(body: PackedByteArray) -> Dictionary:
+	var data: Variant = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(data) != TYPE_DICTIONARY:
+		return {}
+	var quotes := {}
+	for symbol in data:
+		var entry: Variant = data[symbol]
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var closes: Variant = entry.get("close")
+		if typeof(closes) != TYPE_ARRAY or closes.is_empty():
+			continue
+		var last: Variant = closes[closes.size() - 1]
+		if typeof(last) != TYPE_FLOAT and typeof(last) != TYPE_INT:
+			continue
+		var prev: Variant = entry.get("chartPreviousClose",
+				entry.get("previousClose", 0.0))
+		quotes[str(symbol)] = {"price": float(last), "prev_close": float(prev)}
+	return quotes
+
+
 # --- Binance (crypto) --------------------------------------------------------
 
 
@@ -197,8 +301,10 @@ func _refresh_fx() -> void:
 	_fx_remaining = codes.size()
 	if not _session_ready:
 		await _bootstrap_session()
-	for code in codes:
-		_fetch_fx(str(code))
+	for i in codes.size():
+		_fetch_fx(str(codes[i]))
+		if _is_web and i < codes.size() - 1:
+			await get_tree().create_timer(WEB_STAGGER_SEC).timeout
 
 
 func _fetch_fx(code: String) -> void:
@@ -209,7 +315,7 @@ func _fetch_fx(code: String) -> void:
 	var url := CHART_URL % ("%sUSD=X" % code)
 	if not _crumb.is_empty():
 		url += "&crumb=" + _crumb.uri_encode()
-	var err := http.request(url, _cookie_headers())
+	var err := http.request(_proxied(url), _cookie_headers())
 	if err != OK:
 		push_warning("YFinance: FX request could not start for %s (%d)" % [code, err])
 		_finish_fx()
@@ -246,6 +352,17 @@ func _apply_fx() -> void:
 		Utils.currency_rate = 1.0 / float(_fx_pairs[code])
 
 
+# --- Transport helpers -------------------------------------------------------
+
+
+## Returns [param url] unchanged off-web; on web relays it through the
+## currently active public CORS proxy (browsers cannot reach Yahoo directly).
+func _proxied(url: String) -> String:
+	if not _is_web:
+		return url
+	return CORS_PROXIES[_proxy_index % CORS_PROXIES.size()] % url.uri_encode()
+
+
 # --- Cycle bookkeeping -------------------------------------------------------
 
 
@@ -255,10 +372,14 @@ func _release_request(asset: String, http: HTTPRequest) -> void:
 	if not _pending.is_empty():
 		return
 	_refreshing = false
-	# Every Yahoo symbol of the cycle was refused: rebuild session once, retry.
+	# Every Yahoo symbol of the cycle was refused: rebuild the session once
+	# (desktop) or rotate to the next CORS proxy (web), then retry the cycle.
 	if _succeeded == 0 and not _cycle_retried and not _current_symbols.is_empty():
 		_cycle_retried = true
-		_reset_session()
+		if _is_web:
+			_proxy_index += 1
+		else:
+			_reset_session()
 		_retry_cycle()
 		return
 	if _queued:
@@ -269,8 +390,7 @@ func _release_request(asset: String, http: HTTPRequest) -> void:
 func _retry_cycle() -> void:
 	await _bootstrap_session()
 	_refreshing = true
-	for entry in _current_symbols:
-		_fetch_quote(str(entry[0]), str(entry[1]))
+	_fetch_stocks(_current_symbols)
 
 
 # --- Yahoo session (cookies + crumb) -----------------------------------------
@@ -283,7 +403,8 @@ func _reset_session() -> void:
 
 
 func _cookie_headers() -> PackedStringArray:
-	if _cookie_pairs.is_empty():
+	# Browsers forbid setting Cookie on cross-origin requests.
+	if _is_web or _cookie_pairs.is_empty():
 		return PackedStringArray()
 	var parts: Array = []
 	for key in _cookie_pairs:
@@ -293,6 +414,9 @@ func _cookie_headers() -> PackedStringArray:
 
 ## Grabs Yahoo cookies off the homepage, then exchanges them for a crumb.
 func _bootstrap_session() -> void:
+	if _is_web:
+		_session_ready = true   # cookies/crumbs are unreachable from a browser
+		return
 	if _session_ready or _bootstrapping:
 		return
 	_bootstrapping = true
@@ -355,6 +479,11 @@ func _parse_quote(body: PackedByteArray) -> Dictionary:
 	var meta: Variant = results[0].get("meta")
 	if typeof(meta) != TYPE_DICTIONARY:
 		return {}
+	return _quote_from_meta(meta)
+
+
+## Builds {"price", "prev_close"} from a chart/spark meta object.
+func _quote_from_meta(meta: Dictionary) -> Dictionary:
 	var prev := float(meta.get("chartPreviousClose",
 			float(meta.get("previousClose", 0.0))))
 	return {"price": float(meta.get("regularMarketPrice", 0.0)), "prev_close": prev}

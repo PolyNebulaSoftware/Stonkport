@@ -1,5 +1,6 @@
 extends Control
-## Settings screen: display currency, CSV export/import, and data reset.
+## Settings screen: display currency, trade-log spacing, CSV export/import,
+## and data reset.
 
 const CSV_HEADER := "id,asset,asset_type,direction,state,opened_at,closed_at,quantity,entry_price,exit_price,fees,pnl,pnl_pct,notes"
 
@@ -17,6 +18,8 @@ const IMPORTERS := [
 var _last_format := "Stonkport"
 var _codes: Array = []
 var _currency: OptionButton
+var _spacing: HSlider
+var _spacing_value: Label
 var _status: Label
 var _clear_btn: Button
 var _armed_clear := false
@@ -49,6 +52,7 @@ func _ready() -> void:
 	margin.add_child(vbox)
 
 	vbox.add_child(_build_currency_section())
+	vbox.add_child(_build_appearance_section())
 	vbox.add_child(_build_data_section())
 	vbox.add_child(_build_about_section())
 
@@ -89,6 +93,54 @@ func _build_currency_section() -> Control:
 	_currency.selected = selected
 	_currency.item_selected.connect(_on_currency_selected)
 	row.add_child(_currency)
+	return panel
+
+
+func _build_appearance_section() -> Control:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", Utils.panel_style())
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	panel.add_child(box)
+
+	box.add_child(_section_title("Appearance"))
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	box.add_child(row)
+
+	var caption := Label.new()
+	caption.text = "Trade log spacing"
+	caption.tooltip_text = "Scales padding and gaps between trade log rows."
+	row.add_child(caption)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(spacer)
+
+	var factor := clampf(float(TradeManager.settings.get("row_spacing", 1.0)), 0.5, 2.5)
+	_spacing_value = Label.new()
+	_spacing_value.text = "%.2f×" % factor
+	_spacing_value.custom_minimum_size = Vector2(40, 0)
+	_spacing_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_spacing_value.add_theme_color_override("font_color", Utils.MUTED)
+	row.add_child(_spacing_value)
+
+	_spacing = HSlider.new()
+	_spacing.min_value = 0.5
+	_spacing.max_value = 2.5
+	_spacing.step = 0.05
+	_spacing.value = factor
+	_spacing.custom_minimum_size = Vector2(150, 0)
+	_spacing.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_spacing.value_changed.connect(func(v: float) -> void:
+		_spacing_value.text = "%.2f×" % v)
+	_spacing.drag_ended.connect(func(changed: bool) -> void:
+		if changed:
+			TradeManager.set_row_spacing(float(_spacing.value))
+			_set_status("Trade log spacing set to %.2f×." % float(_spacing.value), true))
+	row.add_child(_spacing)
 	return panel
 
 

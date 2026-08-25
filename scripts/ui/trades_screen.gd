@@ -71,8 +71,7 @@ func _ready() -> void:
 	_grid = GridContainer.new()
 	_grid.columns = COLS.size()
 	_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_grid.add_theme_constant_override("h_separation", 10)
-	_grid.add_theme_constant_override("v_separation", 6)
+	_apply_spacing()
 	scroll.add_child(_grid)
 
 	_empty = Label.new()
@@ -83,6 +82,7 @@ func _ready() -> void:
 
 	get_viewport().size_changed.connect(_on_viewport_resized)
 	TradeManager.trades_changed.connect(_refresh)
+	TradeManager.settings_changed.connect(_on_settings_changed)
 	MarketSimulator.market_ticked.connect(_refresh)
 	_on_viewport_resized()
 
@@ -200,7 +200,8 @@ func _fill_header() -> void:
 		label.text = HEADERS[i]
 		label.horizontal_alignment = COLS[i].align
 		label.add_theme_color_override("font_color", Utils.MUTED)
-		label.add_theme_font_size_override("font_size", 10)
+		label.add_theme_font_size_override("font_size", 11)
+		label.add_theme_stylebox_override("normal", _cell_pad())
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_grid.add_child(label)
 
@@ -237,7 +238,7 @@ func _append_row(trade: Dictionary) -> void:
 	asset_cell.add_theme_constant_override("separation", 6)
 	var name_label := Label.new()
 	name_label.text = str(trade.get("asset", "?"))
-	name_label.add_theme_font_size_override("font_size", 13)
+	name_label.add_theme_font_size_override("font_size", 14)
 	name_label.add_theme_color_override("font_color", Utils.TEXT)
 	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	asset_cell.add_child(name_label)
@@ -246,6 +247,7 @@ func _append_row(trade: Dictionary) -> void:
 	var dir_label := Label.new()
 	dir_label.text = "L" if str(trade.get("direction", "long")) == "long" else "S"
 	dir_label.add_theme_color_override("font_color", Utils.ACCENT if dir_label.text == "L" else Utils.ORANGE)
+	dir_label.add_theme_stylebox_override("normal", _cell_pad())
 
 	var open_state := str(trade.get("state", "open")) == "open"
 
@@ -287,7 +289,7 @@ func _append_card(id: String, cells: Dictionary) -> void:
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 4)
+	vbox.add_theme_constant_override("separation", 6)
 	card.add_child(vbox)
 
 	var head := HBoxContainer.new()
@@ -302,7 +304,7 @@ func _append_card(id: String, cells: Dictionary) -> void:
 
 	var flow := HFlowContainer.new()
 	flow.add_theme_constant_override("h_separation", 12)
-	flow.add_theme_constant_override("v_separation", 2)
+	flow.add_theme_constant_override("v_separation", 4)
 	vbox.add_child(flow)
 	for i in [1, 2, 3, 5, 6]:
 		if cells.has(i):
@@ -320,7 +322,7 @@ func _card_field(caption: String, value: Control) -> Control:
 	box.add_theme_constant_override("separation", 0)
 	var cap := Label.new()
 	cap.text = caption
-	cap.add_theme_font_size_override("font_size", 9)
+	cap.add_theme_font_size_override("font_size", 10)
 	cap.add_theme_color_override("font_color", Utils.MUTED)
 	box.add_child(cap)
 	box.add_child(value)
@@ -349,6 +351,35 @@ func _add_cell(content: Control, index: int, trade_id := "") -> void:
 			_row_cells[trade_id] = []
 		_row_cells[trade_id].append(content)
 	_grid.add_child(content)
+
+
+## Invisible padding around every log-row/header cell so rows breathe,
+## scaled by the user's spacing factor.
+func _cell_pad() -> StyleBoxFlat:
+	var f := _spacing()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color.TRANSPARENT
+	sb.content_margin_left = 6.0 * f
+	sb.content_margin_right = 6.0 * f
+	sb.content_margin_top = 8.0 * f
+	sb.content_margin_bottom = 8.0 * f
+	return sb
+
+
+## Row-spacing multiplier from Settings (1.0 = default density).
+func _spacing() -> float:
+	return clampf(float(TradeManager.settings.get("row_spacing", 1.0)), 0.5, 2.5)
+
+
+func _apply_spacing() -> void:
+	var f := _spacing()
+	_grid.add_theme_constant_override("h_separation", int(14 * f))
+	_grid.add_theme_constant_override("v_separation", int(6 * f))
+
+
+func _on_settings_changed() -> void:
+	_apply_spacing()
+	_refresh()
 
 
 func _hover_style() -> StyleBoxFlat:
@@ -400,7 +431,8 @@ func _cell_label(text: String, color := Utils.TEXT) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.add_theme_color_override("font_color", color)
-	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_font_size_override("font_size", 13)
+	label.add_theme_stylebox_override("normal", _cell_pad())
 	return label
 
 
@@ -408,8 +440,9 @@ func _badge(text: String, fg: Color) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.add_theme_color_override("font_color", fg)
-	label.add_theme_font_size_override("font_size", 9)
-	label.add_theme_stylebox_override("normal", Utils.flat_style(Color(fg.r, fg.g, fg.b, 0.16), Color.TRANSPARENT, 4, 5, 1))
+	label.add_theme_font_size_override("font_size", 10)
+	label.add_theme_stylebox_override("normal", Utils.flat_style(Color(fg.r, fg.g, fg.b, 0.16), Color.TRANSPARENT, 4, 7, 3))
+	label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 

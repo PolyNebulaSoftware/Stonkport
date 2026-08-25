@@ -257,6 +257,13 @@ func set_currency(code: String) -> void:
 	settings_changed.emit()
 
 
+## Multiplier applied to trade-log row padding and gaps (Settings ▸ Appearance).
+func set_row_spacing(factor: float) -> void:
+	settings["row_spacing"] = clampf(factor, 0.5, 2.5)
+	save()
+	settings_changed.emit()
+
+
 func _sync_currency_symbol() -> void:
 	Utils.currency_symbol = Utils.CURRENCIES.get(str(settings.get("currency", "USD")), "$")
 	Utils.currency_rate = float(Utils.USD_RATES.get(str(settings.get("currency", "USD")), 1.0))
