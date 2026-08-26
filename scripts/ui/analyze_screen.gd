@@ -37,6 +37,8 @@ var _gbm_on := false
 var _gbm_days := 30
 var _gbm_paths := 12
 var _seed_val := 20260825
+var _gbm_target := 0.0     # target price; 0 = disabled
+var _target_edit: LineEdit
 
 # Computed series.
 var _bars: Array = []               # raw (USD) candles from the feed
@@ -47,6 +49,7 @@ var _k_line := PackedFloat64Array()
 var _d_line := PackedFloat64Array()
 var _cone: Array = []           # per-step {"mid", "hi", "lo"}
 var _paths: Array = []          # sample paths of future closes
+var _gbm_hit_day := -1.0        # day offset where the mid projection crosses the target; -1 = none
 
 # UI.
 var _canvas: ChartCanvas        # clipped surface every chart primitive draws on
@@ -242,6 +245,16 @@ func _build_options_panel() -> Control:
 
 	_gbm_cfg.add_child(_spin_row("Days to simulate", _gbm_days, 1, 365, "days"))
 	_gbm_cfg.add_child(_spin_row("Sample paths", _gbm_paths, 0, 40, "paths"))
+
+	var target_row := HBoxContainer.new()
+	target_row.add_theme_constant_override("separation", 6)
+	target_row.add_child(_muted("Target price"))
+	_target_edit = LineEdit.new()
+	_target_edit.placeholder_text = "0 = off"
+	_target_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_target_edit.text_changed.connect(_on_target_text)
+	target_row.add_child(_target_edit)
+	_gbm_cfg.add_child(target_row)
 
 	var note := _muted("Drift and volatility are estimated from the loaded candles.")
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -483,6 +496,11 @@ func _on_seed_text(text: String) -> void:
 	if text.is_valid_int():
 		_seed_val = int(text)
 		_recompute()
+
+
+func _on_target_text(text: String) -> void:
+	_gbm_target = text.to_float()
+	_recompute()
 
 
 func _on_randomize_seed() -> void:
@@ -844,6 +862,7 @@ func _recompute() -> void:
 
 	_cone.clear()
 	_paths.clear()
+	_gbm_hit_day = -1.0
 	if _gbm_on and closes.size() > 12:
 		_build_gbm(closes)
 
@@ -903,11 +922,17 @@ func _build_gbm(closes: PackedFloat64Array) -> void:
 	for t in range(1, _gbm_days + 1):
 		var m := mu * float(t)
 		var sd := sigma * sqrt(float(t))
+		var mid := s0 * exp(m)
 		_cone.append({
-			"mid": s0 * exp(m),
+			"mid": mid,
 			"hi": s0 * exp(m + 1.2816 * sd),
 			"lo": s0 * exp(m - 1.2816 * sd),
 		})
+		# First day the analytic mid projection crosses the target price.
+		if _gbm_target > 0.0 and _gbm_hit_day < 0.0:
+			var prev_mid := s0 if t == 1 else float(_cone[t - 2]["mid"])
+			if (mid - _gbm_target) * (prev_mid - _gbm_target) <= 0.0:
+				_gbm_hit_day = float(t)
 	for p in _gbm_paths:
 		var path := PackedFloat64Array()
 		path.resize(_gbm_days + 1)
@@ -1195,6 +1220,44 @@ func _draw_chart() -> void:
 		if x_last >= main.position.x and x_last <= main.end.x:
 			_canvas.draw_line(Vector2(x_last, main.position.y), Vector2(x_last, main.end.y),
 					_alpha(Utils.MUTED, 0.5), 1.0)
+		# Dotted guide from the end of the averaged (mid) projection to the
+		# price axis, with a price chip on the right gutter.
+		if mid_pts.size() >= 2:
+			var end_pt: Vector2 = mid_pts[mid_pts.size() - 1]
+			if end_pt.x >= main.position.x and end_pt.x <= main.end.x \
+					and end_pt.y >= main.position.y and end_pt.y <= main.end.y:
+				_canvas.draw_dashed_line(end_pt, Vector2(main.end.x, end_pt.y),
+						_alpha(Utils.GREEN, 0.9), 1.0, 3.0)
+				_canvas.draw_rect(Rect2(main.end.x + 2.0, end_pt.y - 8.0, AXIS_W - 4.0, 16.0),
+						Color(0.07, 0.09, 0.12, 0.95))
+				_canvas.draw_string(font, Vector2(main.end.x + 6.0, end_pt.y + 4.0),
+						_axis_price(float(_cone[_cone.size() - 1]["mid"])),
+						HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Utils.GREEN)
+		# Target price: horizontal dotted line at the target level plus a
+		# vertical dotted guide at the day the mid projection crosses it,
+		# pointing to the date on the time strip.
+		if _gbm_target > 0.0 and _gbm_hit_day >= 0.0:
+			var ty := _price_y(_gbm_target, lo, hi, main)
+			if ty >= main.position.y and ty <= main.end.y:
+				_canvas.draw_dashed_line(Vector2(main.position.x, ty),
+						Vector2(main.end.x, ty), _alpha(Utils.ORANGE, 0.9), 1.0, 3.0)
+				_canvas.draw_rect(Rect2(main.end.x + 2.0, ty - 8.0, AXIS_W - 4.0, 16.0),
+						Color(0.07, 0.09, 0.12, 0.95))
+				_canvas.draw_string(font, Vector2(main.end.x + 6.0, ty + 4.0),
+						_axis_price(_gbm_target), HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Utils.ORANGE)
+			var hit_x := x_last + (_gbm_hit_day + 1.0) * day_slot
+			if hit_x >= main.position.x and hit_x <= main.end.x:
+				_canvas.draw_dashed_line(Vector2(hit_x, main.position.y),
+						Vector2(hit_x, plot.end.y), _alpha(Utils.ORANGE, 0.9), 1.0, 3.0)
+				var hit_ts := now_ts + int(_gbm_hit_day * 86400.0)
+				var hit_label := _fmt_full_time(hit_ts, _seconds_per_bar() * _view_bars / 60.0)
+				var hw := maxf(56.0, font.get_string_size(hit_label,
+						HORIZONTAL_ALIGNMENT_LEFT, -1, 9).x + 10.0)
+				var hx := clampf(hit_x - hw * 0.5, main.position.x, main.end.x - hw)
+				_canvas.draw_rect(Rect2(hx, plot.end.y + 2.0, hw, 14.0),
+						Color(0.07, 0.09, 0.12, 0.95))
+				_canvas.draw_string(font, Vector2(hx + 4.0, plot.end.y + 12.0), hit_label,
+						HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Utils.ORANGE)
 
 	# Candles.
 	if i1 > i0:

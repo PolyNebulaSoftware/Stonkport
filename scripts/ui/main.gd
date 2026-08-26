@@ -87,6 +87,11 @@ func _apply_interface_scale() -> void:
 	var win := get_window()
 	win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
 	win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_IGNORE
+	# Anchor the base size to the actual window so the scale factor applies
+	# uniformly. Without this, Godot scales against its default landscape
+	# base (1152x648), which stretches the Y axis on a portrait phone and
+	# distorts the whole UI.
+	win.content_scale_size = win.size
 	win.content_scale_factor = clampf(
 			float(TradeManager.settings.get("mobile_scale",
 			TradeManager.MOBILE_SCALE_DEFAULT)), 1.0, 3.0)
