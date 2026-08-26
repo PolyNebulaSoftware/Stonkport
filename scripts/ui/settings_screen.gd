@@ -18,8 +18,6 @@ const IMPORTERS := [
 var _last_format := "Stonkport"
 var _codes: Array = []
 var _currency: OptionButton
-var _spacing: HSlider
-var _spacing_value: Label
 var _status: Label
 var _clear_btn: Button
 var _armed_clear := false
@@ -105,13 +103,34 @@ func _build_appearance_section() -> Control:
 
 	box.add_child(_section_title("Appearance"))
 
+	box.add_child(_slider_row("Trade log spacing",
+			"Scales padding and gaps between trade log rows.",
+			clampf(float(TradeManager.settings.get("row_spacing", 1.0)), 0.5, 2.5),
+			0.5, 2.5,
+			func(v: float) -> void:
+				TradeManager.set_row_spacing(v)
+				_set_status("Trade log spacing set to %.2f×." % v, true)))
+
+	box.add_child(_slider_row("Mobile UI scale",
+			"Interface magnifier applied when the web build runs on a phone.",
+			clampf(float(TradeManager.settings.get("mobile_scale",
+					TradeManager.MOBILE_SCALE_DEFAULT)), 1.0, 3.0),
+			1.0, 3.0,
+			func(v: float) -> void:
+				TradeManager.set_mobile_scale(v)
+				_set_status("Mobile UI scale set to %.2f×." % v, true)))
+	return panel
+
+
+## Caption + spacer + live value label + commit-on-release slider row.
+func _slider_row(caption_text: String, tip: String, value: float,
+		min_value: float, max_value: float, on_commit: Callable) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
-	box.add_child(row)
 
 	var caption := Label.new()
-	caption.text = "Trade log spacing"
-	caption.tooltip_text = "Scales padding and gaps between trade log rows."
+	caption.text = caption_text
+	caption.tooltip_text = tip
 	row.add_child(caption)
 
 	var spacer := Control.new()
@@ -119,29 +138,27 @@ func _build_appearance_section() -> Control:
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(spacer)
 
-	var factor := clampf(float(TradeManager.settings.get("row_spacing", 1.0)), 0.5, 2.5)
-	_spacing_value = Label.new()
-	_spacing_value.text = "%.2f×" % factor
-	_spacing_value.custom_minimum_size = Vector2(40, 0)
-	_spacing_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_spacing_value.add_theme_color_override("font_color", Utils.MUTED)
-	row.add_child(_spacing_value)
+	var value_label := Label.new()
+	value_label.text = "%.2f×" % value
+	value_label.custom_minimum_size = Vector2(40, 0)
+	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	value_label.add_theme_color_override("font_color", Utils.MUTED)
+	row.add_child(value_label)
 
-	_spacing = HSlider.new()
-	_spacing.min_value = 0.5
-	_spacing.max_value = 2.5
-	_spacing.step = 0.05
-	_spacing.value = factor
-	_spacing.custom_minimum_size = Vector2(150, 0)
-	_spacing.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_spacing.value_changed.connect(func(v: float) -> void:
-		_spacing_value.text = "%.2f×" % v)
-	_spacing.drag_ended.connect(func(changed: bool) -> void:
+	var slider := HSlider.new()
+	slider.min_value = min_value
+	slider.max_value = max_value
+	slider.step = 0.05
+	slider.value = value
+	slider.custom_minimum_size = Vector2(150, 0)
+	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	slider.value_changed.connect(func(v: float) -> void:
+		value_label.text = "%.2f×" % v)
+	slider.drag_ended.connect(func(changed: bool) -> void:
 		if changed:
-			TradeManager.set_row_spacing(float(_spacing.value))
-			_set_status("Trade log spacing set to %.2f×." % float(_spacing.value), true))
-	row.add_child(_spacing)
-	return panel
+			on_commit.call(float(slider.value)))
+	row.add_child(slider)
+	return row
 
 
 func _build_data_section() -> Control:

@@ -12,6 +12,9 @@ const SAVE_VERSION := 2
 const LEGACY_PATH := "user://portfolio.json"
 const LEGACY_LS_KEY := "stonkport_portfolio_v1"
 
+## Interface magnifier used on mobile web builds unless customized.
+const MOBILE_SCALE_DEFAULT := 1.5
+
 const ACTIONS := ["open", "add", "reduce", "close"]
 const ENTRY_ACTIONS := ["open", "add"]
 const EXIT_ACTIONS := ["reduce", "close"]
@@ -260,6 +263,13 @@ func set_currency(code: String) -> void:
 ## Multiplier applied to trade-log row padding and gaps (Settings ▸ Appearance).
 func set_row_spacing(factor: float) -> void:
 	settings["row_spacing"] = clampf(factor, 0.5, 2.5)
+	save()
+	settings_changed.emit()
+
+
+## Interface magnifier applied on mobile web builds (Settings ▸ Appearance).
+func set_mobile_scale(factor: float) -> void:
+	settings["mobile_scale"] = clampf(factor, 1.0, 3.0)
 	save()
 	settings_changed.emit()
 

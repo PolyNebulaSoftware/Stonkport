@@ -17,6 +17,8 @@ var _current := ""
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	_apply_interface_scale()
+	TradeManager.settings_changed.connect(_apply_interface_scale)
 
 	var hbox := HBoxContainer.new()
 	hbox.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -70,3 +72,21 @@ func _push_range() -> void:
 	if screen != null and screen.has_method("set_range"):
 		var bounds: Array = _bar.range_values()
 		screen.set_range(int(bounds[0]), int(bounds[1]))
+
+
+## True when the WASM build runs in a mobile browser; those get the interface
+## scaled up through content scaling (default touch targets are tiny).
+func _is_mobile_web() -> bool:
+	return OS.has_feature("web") and (OS.has_feature("mobile")
+			or OS.has_feature("web_android") or OS.has_feature("web_ios"))
+
+
+func _apply_interface_scale() -> void:
+	if not _is_mobile_web():
+		return
+	var win := get_window()
+	win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	win.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_IGNORE
+	win.content_scale_factor = clampf(
+			float(TradeManager.settings.get("mobile_scale",
+			TradeManager.MOBILE_SCALE_DEFAULT)), 1.0, 3.0)
