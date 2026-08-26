@@ -451,20 +451,8 @@ func _on_import_path(path: String) -> void:
 	_apply_import(_parse_csv(f.get_as_text()))
 
 
-## Triggers a browser download when running as WASM.
+## Triggers a browser download when running as WASM. Uses the engine-managed
+## blob download: revoking the object URL right after click() (as a manual
+## DOM dance does) races Chrome's fetch of the blob and aborts the save.
 func _web_download(filename: String, text: String) -> void:
-	var js := JavaScriptBridge
-	var parts: JavaScriptObject = js.create_object("Array")
-	parts.push_back(text)
-	var opts: JavaScriptObject = js.create_object("Object")
-	opts.type = "text/csv"
-	var blob = js.get_interface("Blob").new(parts, opts)
-	var url = js.get_interface("URL").createObjectURL(blob)
-	var doc = js.get_interface("document")
-	var link = doc.createElement("a")
-	link.href = url
-	link.download = filename
-	doc.body.appendChild(link)
-	link.click()
-	link.remove()
-	js.get_interface("URL").revokeObjectURL(url)
+	JavaScriptBridge.download_buffer(text.to_utf8_buffer(), filename, "text/csv")
