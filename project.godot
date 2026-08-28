@@ -25,10 +25,11 @@ MarketSimulator="*res://scripts/autoload/market_simulator.gd"
 TradeManager="*res://scripts/autoload/trade_manager.gd"
 YFinance="*res://scripts/net/yfinance_client.gd"
 TrayLauncher="*res://scripts/tray/tray_launcher.gd"
+MarketStats="*res://scripts/net/market_stats.gd"
 
 [display]
 
-window/stretch/aspect="ignore"
+window/stretch/aspect="expand"
 
 [gui]
 

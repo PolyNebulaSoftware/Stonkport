@@ -9,6 +9,9 @@ extends Control
 const LEFT_W := 248.0
 const AXIS_W := 58.0
 const TIMEFRAMES := ["1m", "5m", "1h", "1d", "1w"]
+const MAX_ZOOM_OUT_TIMES := 4.0   # view may span up to this × the loaded candles
+const MAX_DRAWN_PATHS := 32       # above this, paths render as a quantile fan
+const MC_LABEL_MIN_PATHS := 100   # below this, VaR/ES labels are statistical noise
 const EMA_LENGTHS := [9, 12, 21, 26, 50, 100]
 const SMA_LENGTHS := [20, 50, 100, 200]
 const RIBBON_COLORS := [
@@ -35,10 +38,11 @@ var _d_smooth := 3
 # Simulation options.
 var _gbm_on := false
 var _gbm_days := 30
-var _gbm_paths := 12
+var _gbm_paths := 2000
 var _seed_val := 20260825
 var _gbm_target := 0.0     # target price; 0 = disabled
 var _target_edit: LineEdit
+var _gbm_note: Label       # shows where the current drift/vol estimates come from
 
 # Computed series.
 var _bars: Array = []               # raw (USD) candles from the feed
@@ -48,8 +52,13 @@ var _smas := {}                 # period -> PackedFloat64Array (SMA family)
 var _k_line := PackedFloat64Array()
 var _d_line := PackedFloat64Array()
 var _cone: Array = []           # per-step {"mid", "hi", "lo"}
-var _paths: Array = []          # sample paths of future closes
+var _paths: Array = []          # individually rendered sample paths (small runs)
 var _gbm_hit_day := -1.0        # day offset where the mid projection crosses the target; -1 = none
+var _mc_fan: Array = []                  # MC checkpoints [{step, q01..q99}] as s0-multipliers
+var _mc_terminal := PackedFloat64Array() # sorted terminal s0-multipliers (ascending)
+var _mc_key := ""                        # parameter key of the cached Monte Carlo run
+var _mc_labels: Array = []               # bottom-right risk labels: [[text, color], ...]
+var _gbm_timer: Timer                    # debounces re-simulation while spinning/typing
 
 # UI.
 var _canvas: ChartCanvas        # clipped surface every chart primitive draws on
@@ -168,9 +177,17 @@ func _ready() -> void:
 	add_child(_build_top_overlay())
 	_build_search_dialog()
 
+	# Debounces GBM re-simulation while spinners/seed are being changed.
+	_gbm_timer = Timer.new()
+	_gbm_timer.wait_time = 0.3
+	_gbm_timer.one_shot = true
+	_gbm_timer.timeout.connect(_recompute)
+	add_child(_gbm_timer)
+
 	TradeManager.trades_changed.connect(_on_trades_changed)
 	TradeManager.settings_changed.connect(_recompute)
 	MarketSimulator.market_ticked.connect(_recompute)
+	MarketStats.stats_updated.connect(_on_stats_updated)
 	get_viewport().size_changed.connect(_apply_responsive)
 
 	_ticker = _default_ticker()
@@ -244,7 +261,7 @@ func _build_options_panel() -> Control:
 	_gbm_cfg.add_child(seed_row)
 
 	_gbm_cfg.add_child(_spin_row("Days to simulate", _gbm_days, 1, 365, "days"))
-	_gbm_cfg.add_child(_spin_row("Sample paths", _gbm_paths, 0, 40, "paths"))
+	_gbm_cfg.add_child(_spin_row("Sample paths", _gbm_paths, 0, 20000, "paths", 50))
 
 	var target_row := HBoxContainer.new()
 	target_row.add_theme_constant_override("separation", 6)
@@ -256,9 +273,9 @@ func _build_options_panel() -> Control:
 	target_row.add_child(_target_edit)
 	_gbm_cfg.add_child(target_row)
 
-	var note := _muted("Drift and volatility are estimated from the loaded candles.")
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_gbm_cfg.add_child(note)
+	_gbm_note = _muted("Drift and volatility are estimated from the loaded candles.")
+	_gbm_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_gbm_cfg.add_child(_gbm_note)
 	sims.add_child(_indent(_gbm_cfg))
 
 	var disclaimer := _muted("Analytics and simulations are for information only — not financial advice. Any interpretation or trading decision based on them is your own responsibility.")
@@ -421,14 +438,15 @@ func _check(text: String, pressed: bool, key: String) -> CheckButton:
 	return cb
 
 
-func _spin_row(label_text: String, value: int, min_v: int, max_v: int, key: String) -> Control:
+func _spin_row(label_text: String, value: int, min_v: int, max_v: int, key: String,
+		step_v := 1) -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	row.add_child(_muted(label_text))
 	var spin := SpinBox.new()
 	spin.min_value = min_v
 	spin.max_value = max_v
-	spin.step = 1
+	spin.step = step_v
 	spin.value = value
 	spin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spin.value_changed.connect(_on_spin.bind(key))
@@ -489,13 +507,13 @@ func _on_spin(value: float, key: String) -> void:
 			_gbm_days = int(value)
 		"paths":
 			_gbm_paths = int(value)
-	_recompute()
+	_schedule_gbm_recompute()
 
 
 func _on_seed_text(text: String) -> void:
 	if text.is_valid_int():
 		_seed_val = int(text)
-		_recompute()
+		_schedule_gbm_recompute()
 
 
 func _on_target_text(text: String) -> void:
@@ -503,10 +521,22 @@ func _on_target_text(text: String) -> void:
 	_recompute()
 
 
+## Real-market drift/vol arrived for the charted asset: rebuild the cone.
+func _on_stats_updated(asset: String) -> void:
+	if str(asset) == _ticker:
+		_recompute()
+
+
 func _on_randomize_seed() -> void:
 	_seed_val = randi() % 100000000
 	_seed_edit.text = str(_seed_val)
-	_recompute()
+	_schedule_gbm_recompute()
+
+
+## Debounces recompute for controls that fire rapid changes (spin arrows,
+## seed typing) so a large Monte Carlo run isn't restarted per tick.
+func _schedule_gbm_recompute() -> void:
+	_gbm_timer.start()
 
 
 func _on_timeframe_selected(index: int) -> void:
@@ -806,7 +836,9 @@ func _zoom_at(mouse_x: float, factor: float) -> void:
 
 func _clamp_view() -> void:
 	var total := maxf(float(_view_bars_data.size()), 8.0)
-	_view_bars = clampf(_view_bars, 8.0, total)
+	# Upper bound exceeds the series so zoom-out keeps working past the data
+	# edge (empty lead-in on the left, GBM projection tail on the right).
+	_view_bars = clampf(_view_bars, 8.0, total * MAX_ZOOM_OUT_TIMES)
 	# Allow overscrolling by up to one full view width on either side.
 	_view_start = clampf(_view_start, -_view_bars,
 			maxf(total - _view_bars, 0.0) + _view_bars)
@@ -866,6 +898,7 @@ func _recompute() -> void:
 	_cone.clear()
 	_paths.clear()
 	_gbm_hit_day = -1.0
+	_mc_labels.clear()
 	if _gbm_on and closes.size() > 12:
 		_build_gbm(closes)
 
@@ -896,32 +929,46 @@ func _seconds_per_bar() -> float:
 	return maxf(float(spec.get("seconds", float(spec.get("minutes", 390.0)) * 60.0)), 1.0)
 
 
-## Analytic GBM quantile cone plus seeded sample paths over [member _gbm_days].
+## Analytic GBM quantile cone plus a seeded Monte Carlo simulation over
+## [member _gbm_days]. Drift/vol prefer MarketStats (real 1y daily closes,
+## EWMA vol, already in daily terms); without them they are estimated from
+## the loaded candles. Up to MAX_DRAWN_PATHS paths are simulated individually
+## for line rendering; larger runs reduce to per-step empirical quantile
+## checkpoints (rendered as a fan) plus the terminal distribution backing
+## the VaR/ES labels.
 func _build_gbm(closes: PackedFloat64Array) -> void:
-	var rets := PackedFloat64Array()
-	for i in range(1, closes.size()):
-		if closes[i - 1] > 0.0 and closes[i] > 0.0:
-			rets.append(log(closes[i] / closes[i - 1]))
-	if rets.is_empty():
-		return
 	var mu := 0.0
-	for r in rets:
-		mu += r
-	mu /= rets.size()
-	var acc := 0.0
-	for r in rets:
-		acc += (r - mu) * (r - mu)
-	var sigma := sqrt(acc / maxf(rets.size() - 1, 1))
-	# Rescale per-bar statistics to daily steps.
-	var per_day := clampf(390.0 / _minutes_per_bar(), 1.0, 390.0)
-	mu *= per_day
-	sigma *= sqrt(per_day)
+	var sigma := 0.0
+	var stats: Dictionary = MarketStats.get_stats(_ticker)
+	if not stats.is_empty() and float(stats.get("sigma_daily", 0.0)) > 0.0:
+		mu = float(stats.get("mu_daily", 0.0))
+		sigma = float(stats.get("sigma_daily", 0.0))
+		_gbm_note.text = "Drift/vol from %d real daily closes (%s, EWMA vol)." % [
+				int(stats.get("samples", 0)), str(stats.get("source", ""))]
+	else:
+		var rets := PackedFloat64Array()
+		for i in range(1, closes.size()):
+			if closes[i - 1] > 0.0 and closes[i] > 0.0:
+				rets.append(log(closes[i] / closes[i - 1]))
+		if rets.is_empty():
+			return
+		for r in rets:
+			mu += r
+		mu /= rets.size()
+		var acc := 0.0
+		for r in rets:
+			acc += (r - mu) * (r - mu)
+		sigma = sqrt(acc / maxf(rets.size() - 1, 1))
+		# Rescale per-bar statistics to daily steps.
+		var per_day := clampf(390.0 / _minutes_per_bar(), 1.0, 390.0)
+		mu *= per_day
+		sigma *= sqrt(per_day)
+		_gbm_note.text = "Drift and volatility are estimated from the loaded candles."
 
 	var s0 := closes[closes.size() - 1]
-	var rng := RandomNumberGenerator.new()
-	rng.seed = _seed_val
 	_cone.clear()
 	_paths.clear()
+	_mc_labels.clear()
 	for t in range(1, _gbm_days + 1):
 		var m := mu * float(t)
 		var sd := sigma * sqrt(float(t))
@@ -936,6 +983,26 @@ func _build_gbm(closes: PackedFloat64Array) -> void:
 			var prev_mid := s0 if t == 1 else float(_cone[t - 2]["mid"])
 			if (mid - _gbm_target) * (prev_mid - _gbm_target) <= 0.0:
 				_gbm_hit_day = float(t)
+	if _gbm_paths <= 0:
+		_mc_fan.clear()
+		_mc_terminal.resize(0)
+		_mc_key = ""
+		return
+	if _gbm_paths <= MAX_DRAWN_PATHS:
+		_mc_fan.clear()
+		_mc_terminal.resize(0)
+		_mc_key = ""
+		_simulate_paths(s0, mu, sigma)
+	else:
+		_run_monte_carlo(mu, sigma)
+		_build_risk_labels(s0)
+
+
+## Simulates [member _gbm_paths] individual price paths (small runs only;
+## cheap enough to redo on every recompute).
+func _simulate_paths(s0: float, mu: float, sigma: float) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _seed_val
 	for p in _gbm_paths:
 		var path := PackedFloat64Array()
 		path.resize(_gbm_days + 1)
@@ -945,6 +1012,141 @@ func _build_gbm(closes: PackedFloat64Array) -> void:
 			px *= exp(mu + sigma * rng.randfn(0.0, 1.0))
 			path[t] = px
 		_paths.append(path)
+
+
+## Runs the large Monte Carlo simulation, cached per parameter set. Paths
+## accumulate log-returns step-major; at ~120 checkpoints the cross-section
+## is sorted into empirical quantile multipliers for the fan render, and the
+## terminal cross-section is kept (ascending) for the VaR/ES labels. Values
+## are normalized s0-multipliers with the drift applied at extraction, so
+## live-price ticks rescale at render time without re-simulating.
+func _run_monte_carlo(mu: float, sigma: float) -> void:
+	var key := "%s|%.9f|%.9f|%d|%d|%d" % [
+			_ticker, mu, sigma, _gbm_days, _seed_val, _gbm_paths]
+	if key == _mc_key:
+		return
+	_mc_key = key
+	_mc_fan.clear()
+	_mc_terminal.resize(0)
+	var n := _gbm_paths
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _seed_val
+	var cum := PackedFloat64Array()
+	cum.resize(n)
+	cum.fill(0.0)
+	var ck_every := maxi(1, ceili(_gbm_days / 120.0))
+	for t in range(1, _gbm_days + 1):
+		for p in n:
+			cum[p] += sigma * rng.randfn(0.0, 1.0)
+		if t % ck_every != 0 and t != _gbm_days:
+			continue
+		var sorted := cum.duplicate()
+		sorted.sort()
+		if t == _gbm_days:
+			var term := PackedFloat64Array()
+			term.resize(n)
+			for i in n:
+				term[i] = exp(mu * float(_gbm_days) + sorted[i])
+			_mc_terminal = term
+		_mc_fan.append({
+			"step": t,
+			"q01": _mc_quantile(sorted, mu * float(t), 0.01),
+			"q05": _mc_quantile(sorted, mu * float(t), 0.05),
+			"q25": _mc_quantile(sorted, mu * float(t), 0.25),
+			"q50": _mc_quantile(sorted, mu * float(t), 0.50),
+			"q75": _mc_quantile(sorted, mu * float(t), 0.75),
+			"q95": _mc_quantile(sorted, mu * float(t), 0.95),
+			"q99": _mc_quantile(sorted, mu * float(t), 0.99),
+		})
+
+
+## Multiplier at quantile [param q] of a sorted log-multiplier cross-section
+## with drift [param mu_t] accumulated by step [param t].
+static func _mc_quantile(sorted_log: PackedFloat64Array, mu_t: float, q: float) -> float:
+	var n := sorted_log.size()
+	var idx := clampi(int(round(q * float(n - 1))), 0, n - 1)
+	return exp(mu_t + sorted_log[idx])
+
+
+## Builds the bottom-right risk labels from the terminal distribution:
+## worst-outcome percentile levels, VaR and expected shortfall at 95%/99%.
+func _build_risk_labels(s0: float) -> void:
+	_mc_labels.clear()
+	if _mc_terminal.size() < MC_LABEL_MIN_PATHS:
+		return
+	var p01 := _mc_terminal[_mc_rank(0.01)]
+	var p05 := _mc_terminal[_mc_rank(0.05)]
+	var es95 := _tail_mean_mult(0.05)
+	var es99 := _tail_mean_mult(0.01)
+	var soft := Color(Utils.RED, 0.8)
+	_mc_labels.append([
+			"Worst 1%%: %s (%.1f%%)" % [Utils.money(s0 * p01), (p01 - 1.0) * 100.0], soft])
+	_mc_labels.append([
+			"Worst 5%%: %s (%.1f%%)" % [Utils.money(s0 * p05), (p05 - 1.0) * 100.0], soft])
+	_mc_labels.append([
+			"VaR 95: %s (%.1f%%)" % [Utils.money(s0 * (1.0 - p05)), (1.0 - p05) * 100.0],
+			Utils.RED])
+	_mc_labels.append([
+			"VaR 99: %s (%.1f%%)" % [Utils.money(s0 * (1.0 - p01)), (1.0 - p01) * 100.0],
+			Utils.RED])
+	_mc_labels.append([
+			"ES 95: %s (%.1f%%)" % [Utils.money(s0 * (1.0 - es95)), (1.0 - es95) * 100.0],
+			Utils.RED])
+	_mc_labels.append([
+			"ES 99: %s (%.1f%%)" % [Utils.money(s0 * (1.0 - es99)), (1.0 - es99) * 100.0],
+			Utils.RED])
+
+
+## Index into the ascending terminal distribution at quantile [param q].
+func _mc_rank(q: float) -> int:
+	return clampi(int(round(q * float(_mc_terminal.size() - 1))),
+			0, _mc_terminal.size() - 1)
+
+
+## Mean s0-multiplier of the worst [param frac] fraction of outcomes.
+func _tail_mean_mult(frac: float) -> float:
+	var n := _mc_terminal.size()
+	var k := clampi(int(ceil(frac * float(n))), 1, n)
+	var acc := 0.0
+	for i in k:
+		acc += _mc_terminal[i]
+	return acc / float(k)
+
+
+## Renders the Monte Carlo quantile fan anchored at the last candle: filled
+## 5-95% and 25-75% bands with 1%/99% outlines. Checkpoint values are
+## s0-multipliers, rescaled by the current (live) anchor price.
+func _draw_mc_fan(x_last: float, s0: float, lo: float, hi: float,
+		main: Rect2, day_slot: float) -> void:
+	var y0 := _price_y(s0, lo, hi, main)
+	var bands := {
+		"q01": PackedVector2Array([Vector2(x_last, y0)]),
+		"q05": PackedVector2Array([Vector2(x_last, y0)]),
+		"q25": PackedVector2Array([Vector2(x_last, y0)]),
+		"q75": PackedVector2Array([Vector2(x_last, y0)]),
+		"q95": PackedVector2Array([Vector2(x_last, y0)]),
+		"q99": PackedVector2Array([Vector2(x_last, y0)]),
+	}
+	for ck: Dictionary in _mc_fan:
+		var x := x_last + float(ck["step"]) * day_slot
+		for key: String in bands:
+			bands[key].append(Vector2(x,
+					_price_y(s0 * float(ck[key]), lo, hi, main)))
+	if bands["q95"].size() >= 2:
+		var outer := PackedVector2Array(bands["q95"])
+		for k in range(bands["q05"].size() - 1, -1, -1):
+			outer.append(bands["q05"][k])
+		_canvas.draw_colored_polygon(outer, _alpha(Utils.ACCENT, 0.10))
+		_canvas.draw_polyline(bands["q95"], _alpha(Utils.ACCENT, 0.35), 1.0, true)
+		_canvas.draw_polyline(bands["q05"], _alpha(Utils.ACCENT, 0.35), 1.0, true)
+	if bands["q75"].size() >= 2:
+		var inner := PackedVector2Array(bands["q75"])
+		for k in range(bands["q25"].size() - 1, -1, -1):
+			inner.append(bands["q25"][k])
+		_canvas.draw_colored_polygon(inner, _alpha(Utils.ACCENT, 0.14))
+	if bands["q99"].size() >= 2:
+		_canvas.draw_polyline(bands["q99"], _alpha(Utils.ACCENT, 0.18), 1.0, true)
+		_canvas.draw_polyline(bands["q01"], _alpha(Utils.ACCENT, 0.18), 1.0, true)
 
 
 static func _ema(values: PackedFloat64Array, period: int) -> PackedFloat64Array:
@@ -1117,6 +1319,14 @@ func _draw_chart() -> void:
 			for t in range(proj_from, mini(proj_to, path.size() - 2) + 1):
 				lo = minf(lo, float(path[t + 1]))
 				hi = maxf(hi, float(path[t + 1]))
+		if not _mc_fan.is_empty():
+			var s0f := float(_view_bars_data[n - 1]["close"])
+			for ck: Dictionary in _mc_fan:
+				var st: int = ck["step"]
+				if st < proj_from or st > proj_to:
+					continue
+				lo = minf(lo, s0f * float(ck["q01"]))
+				hi = maxf(hi, s0f * float(ck["q99"]))
 	if lo > hi:
 		_canvas.draw_string(font, Vector2(16, ch * 0.5),
 				"No data for %s" % _ticker, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Utils.MUTED)
@@ -1205,14 +1415,20 @@ func _draw_chart() -> void:
 			hi_pts.append(Vector2(x, _price_y(float(pt["hi"]), lo, hi, main)))
 			mid_pts.append(Vector2(x, _price_y(float(pt["mid"]), lo, hi, main)))
 			lo_pts.append(Vector2(x, _price_y(float(pt["lo"]), lo, hi, main)))
+		var fan_mode := _paths.is_empty() and not _mc_fan.is_empty()
 		if hi_pts.size() >= 2:
-			var poly := PackedVector2Array(hi_pts)
-			for k in range(lo_pts.size() - 1, -1, -1):
-				poly.append(lo_pts[k])
-			_canvas.draw_colored_polygon(poly, _alpha(Utils.ACCENT, 0.08))
-			_canvas.draw_polyline(hi_pts, _alpha(Utils.ACCENT, 0.35), 1.0, true)
-			_canvas.draw_polyline(lo_pts, _alpha(Utils.ACCENT, 0.35), 1.0, true)
+			if not fan_mode:
+				var poly := PackedVector2Array(hi_pts)
+				for k in range(lo_pts.size() - 1, -1, -1):
+					poly.append(lo_pts[k])
+				_canvas.draw_colored_polygon(poly, _alpha(Utils.ACCENT, 0.08))
+				_canvas.draw_polyline(hi_pts, _alpha(Utils.ACCENT, 0.35), 1.0, true)
+				_canvas.draw_polyline(lo_pts, _alpha(Utils.ACCENT, 0.35), 1.0, true)
 			_canvas.draw_polyline(mid_pts, _alpha(Utils.GREEN, 0.85), 1.4, true)
+		# Many-path runs render as an empirical quantile fan instead of
+		# individual lines; small runs keep the classic spaghetti plot.
+		if fan_mode:
+			_draw_mc_fan(x_last, s0, lo, hi, main, day_slot)
 		for path in _paths:
 			var pp := PackedVector2Array([Vector2(x_last, y0)])
 			for t in range(proj_from, proj_to + 1):
@@ -1261,6 +1477,26 @@ func _draw_chart() -> void:
 						Color(0.07, 0.09, 0.12, 0.95))
 				_canvas.draw_string(font, Vector2(hx + 4.0, plot.end.y + 12.0), hit_label,
 						HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Utils.ORANGE)
+
+	# Monte Carlo risk labels: worst-tail outcomes, VaR and expected
+	# shortfall, stacked in the plot's bottom-right corner.
+	if not _mc_labels.is_empty():
+		var lh := 14.0
+		var lpad := 6.0
+		var box_w := 0.0
+		for lab: Array in _mc_labels:
+			box_w = maxf(box_w, font.get_string_size(str(lab[0]),
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x)
+		var box_h := float(_mc_labels.size()) * lh
+		var box := Rect2(main.end.x - box_w - lpad * 2.0,
+				main.end.y - box_h - lpad * 1.5, box_w + lpad * 2.0, box_h + lpad)
+		_canvas.draw_rect(box, Color(0.05, 0.07, 0.10, 0.78))
+		var lab_y := box.position.y + lpad * 0.5 + 10.0
+		for lab2: Array in _mc_labels:
+			_canvas.draw_string(font, Vector2(box.position.x + lpad, lab_y),
+					str(lab2[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 10,
+					Color(lab2[1]))
+			lab_y += lh
 
 	# Candles.
 	if i1 > i0:

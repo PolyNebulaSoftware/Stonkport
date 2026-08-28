@@ -135,6 +135,11 @@ func _collect_symbols() -> Array:
 	return entries
 
 
+## Public access to the tradable-symbol list (shared with MarketStats).
+func collect_symbols() -> Array:
+	return _collect_symbols()
+
+
 # --- Yahoo (stocks) ----------------------------------------------------------
 
 
@@ -550,3 +555,94 @@ func _quote_from_meta(meta: Dictionary) -> Dictionary:
 	var prev := float(meta.get("chartPreviousClose",
 			float(meta.get("previousClose", 0.0))))
 	return {"price": float(meta.get("regularMarketPrice", 0.0)), "prev_close": prev}
+
+
+# --- History (real OHLCV for MarketStats) ------------------------------------
+
+
+## Fetches OHLCV history for [param symbol] (e.g. range "1y", interval "1d")
+## and returns aligned arrays {"ts", "open", "high", "low", "close"} or {}
+## on failure. Shares the Yahoo session and web transport with the quote
+## path. Awaitable.
+func fetch_chart_history(symbol: String, range_str := "1y", interval := "1d") -> Dictionary:
+	if _is_web:
+		await _ensure_web_proxies()
+	if not _session_ready:
+		await _bootstrap_session()
+	var http := HTTPRequest.new()
+	http.timeout = REQUEST_TIMEOUT_S
+	add_child(http)
+	var url := "https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=%s&range=%s" % [
+			symbol, interval, range_str]
+	if not _crumb.is_empty():
+		url += "&crumb=" + _crumb.uri_encode()
+	var err := http.request(_proxied(url), _cookie_headers())
+	if err != OK:
+		http.queue_free()
+		push_warning("YFinance: history request could not start for %s (%d)" % [symbol, err])
+		return {}
+	var res: Array = await http.request_completed
+	http.queue_free()
+	if res[0] != HTTPRequest.RESULT_SUCCESS or int(res[1]) != HTTPClient.RESPONSE_OK:
+		push_warning("YFinance: history request failed for %s (result=%d, http=%d)" % [symbol, res[0], res[1]])
+		return {}
+	return _parse_history(PackedByteArray(res[3]))
+
+
+## Extracts aligned OHLCV arrays from a chart payload, dropping bars with
+## missing values (Yahoo pads the series with nulls around gaps).
+func _parse_history(body: PackedByteArray) -> Dictionary:
+	var data: Variant = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(data) != TYPE_DICTIONARY:
+		return {}
+	var chart: Variant = data.get("chart")
+	if typeof(chart) != TYPE_DICTIONARY:
+		return {}
+	var results: Variant = chart.get("result")
+	if typeof(results) != TYPE_ARRAY or results.is_empty() \
+			or typeof(results[0]) != TYPE_DICTIONARY:
+		return {}
+	var result: Dictionary = results[0]
+	var stamps: Variant = result.get("timestamp")
+	var quote: Variant = result.get("indicators", {}).get("quote")
+	if typeof(stamps) != TYPE_ARRAY or typeof(quote) != TYPE_ARRAY \
+			or quote.is_empty() or typeof(quote[0]) != TYPE_DICTIONARY:
+		return {}
+	var q: Dictionary = quote[0]
+	var series := {}
+	for field in ["open", "high", "low", "close"]:
+		var arr: Variant = q.get(field)
+		if typeof(arr) != TYPE_ARRAY:
+			return {}
+		series[field] = arr
+	var n := int(stamps.size())
+	for field in series:
+		n = mini(n, (series[field] as Array).size())
+	var out := {
+		"ts": PackedInt64Array(),
+		"open": PackedFloat64Array(),
+		"high": PackedFloat64Array(),
+		"low": PackedFloat64Array(),
+		"close": PackedFloat64Array(),
+	}
+	for i in n:
+		var o: Variant = series["open"][i]
+		var h: Variant = series["high"][i]
+		var l: Variant = series["low"][i]
+		var c: Variant = series["close"][i]
+		if typeof(o) != TYPE_FLOAT and typeof(o) != TYPE_INT:
+			continue
+		if typeof(h) != TYPE_FLOAT and typeof(h) != TYPE_INT:
+			continue
+		if typeof(l) != TYPE_FLOAT and typeof(l) != TYPE_INT:
+			continue
+		if typeof(c) != TYPE_FLOAT and typeof(c) != TYPE_INT:
+			continue
+		out["ts"].append(int(stamps[i]))
+		out["open"].append(float(o))
+		out["high"].append(float(h))
+		out["low"].append(float(l))
+		out["close"].append(float(c))
+	if (out["close"] as PackedFloat64Array).is_empty():
+		return {}
+	return out

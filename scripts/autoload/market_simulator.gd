@@ -11,11 +11,11 @@ const DEFAULT_INTERVAL_S := 5.0
 const TRADING_MINUTES_PER_DAY := 390.0
 
 const TIMEFRAME_SPECS := {
-	"1m": {"bars": 120, "minutes": 1, "seconds": 60},
-	"5m": {"bars": 96, "minutes": 5, "seconds": 300},
-	"1h": {"bars": 90, "minutes": 60, "seconds": 3600},
-	"1d": {"bars": 120, "minutes": 390, "seconds": 86400},
-	"1w": {"bars": 104, "minutes": 1950, "seconds": 604800},
+	"1m": {"bars": 390, "minutes": 1, "seconds": 60},
+	"5m": {"bars": 288, "minutes": 5, "seconds": 300},
+	"1h": {"bars": 240, "minutes": 60, "seconds": 3600},
+	"1d": {"bars": 390, "minutes": 390, "seconds": 86400},
+	"1w": {"bars": 156, "minutes": 1950, "seconds": 604800},
 }
 
 var universe: Dictionary = {}
