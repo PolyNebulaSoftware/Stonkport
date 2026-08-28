@@ -5,19 +5,24 @@ extends Node
 ## yfinance does, with one session-rebuild retry per refused cycle).
 ## Crypto comes from Binance's public data API (data-api.binance.vision).
 ## Web builds cannot reach Yahoo directly (no CORS headers, no cookie
-## access), so there stock symbols ride public CORS proxies via Yahoo's
-## batched "spark" endpoint, rotating proxies when a whole cycle is refused.
+## access), so there requests are relayed: first through the tray launcher's
+## same-origin /__proxy endpoint when it serves this build, else through
+## public CORS proxies against Yahoo's batched "spark" endpoint, rotating
+## transports whenever a whole cycle is refused.
 ## Fetches happen once on load and whenever TradeManager emits a save;
 ## overlapping refreshes coalesce into one.
+
+const WebServerScript := preload("res://scripts/tray/local_web_server.gd")
 
 const CHART_URL := "https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=1d"
 const CRUMB_URL := "https://query1.finance.yahoo.com/v1/test/getcrumb"
 const COOKIE_SEED_URL := "https://finance.yahoo.com/"
 const BINANCE_TICKER_URL := "https://data-api.binance.vision/api/v3/ticker/24hr?symbol=%s"
 # Web-only plumbing: browsers block query1.finance.yahoo.com (no CORS
-# headers) and hide Set-Cookie, so requests are relayed through public CORS
-# proxies against the batched spark endpoint instead of one chart call per
-# symbol. Proxies rotate whenever an entire cycle comes back refused.
+# headers) and hide Set-Cookie, so requests are relayed instead of hitting
+# the chart API per symbol. The tray launcher's same-origin relay is probed
+# first; public CORS proxies are the fallback, rotating whenever an entire
+# cycle comes back refused.
 const WEB_SPARK_URL := "https://query1.finance.yahoo.com/v8/finance/spark?symbols=%s&range=1d&interval=1d"
 const CORS_PROXIES := [
 	"https://api.allorigins.win/raw?url=%s",
@@ -51,12 +56,17 @@ var _succeeded := 0
 var _cycle_retried := false
 
 var _is_web := OS.has_feature("web")
-var _proxy_index := 0     # active CORS_PROXIES entry (web builds only)
+var _proxy_index := 0     # active transport entry (web builds only)
+var _web_proxies: Array = []      # transport templates: launcher relay first, then CORS_PROXIES
+var _web_proxies_ready := false
+var _web_proxies_busy := false
 
 
 func _ready() -> void:
 	TradeManager.trades_changed.connect(request_refresh)
 	TradeManager.settings_changed.connect(_apply_fx)
+	if _is_web:
+		_init_web_proxies()   # async: probes the launcher relay, then fills the list
 	# Single fetch on load, once TradeManager has hydrated the journal.
 	request_refresh.call_deferred()
 
@@ -92,6 +102,8 @@ func request_refresh() -> void:
 		_refreshing = false
 		return
 	_current_symbols = stocks
+	if _is_web:
+		await _ensure_web_proxies()
 	if not _session_ready:
 		await _bootstrap_session()
 	_fetch_stocks(stocks)
@@ -299,6 +311,8 @@ func _refresh_fx() -> void:
 	codes.sort()
 	_fx_busy = true
 	_fx_remaining = codes.size()
+	if _is_web:
+		await _ensure_web_proxies()
 	if not _session_ready:
 		await _bootstrap_session()
 	for i in codes.size():
@@ -356,11 +370,60 @@ func _apply_fx() -> void:
 
 
 ## Returns [param url] unchanged off-web; on web relays it through the
-## currently active public CORS proxy (browsers cannot reach Yahoo directly).
+## currently active transport (launcher relay or public CORS proxy).
 func _proxied(url: String) -> String:
 	if not _is_web:
 		return url
-	return CORS_PROXIES[_proxy_index % CORS_PROXIES.size()] % url.uri_encode()
+	if not _web_proxies_ready:
+		return CORS_PROXIES[0] % url.uri_encode()
+	return str(_web_proxies[_proxy_index % _web_proxies.size()]) % url.uri_encode()
+
+
+## Shared transport entry for other Yahoo consumers (the Analyze screen's
+## ticker search): routes [param url] through the web relay/proxy chain,
+## unchanged off-web. Awaitable so first use waits for the relay probe.
+func proxied_url(url: String) -> String:
+	if _is_web:
+		await _ensure_web_proxies()
+	return _proxied(url)
+
+
+## Builds the web transport list once: the tray launcher's same-origin relay
+## first when this build is really served by it (ping check), then the public
+## CORS proxies as fallback for remotely hosted builds.
+func _init_web_proxies() -> void:
+	if _web_proxies_ready or _web_proxies_busy:
+		return
+	_web_proxies_busy = true
+	var origin := str(JavaScriptBridge.eval("window.location.origin", true))
+	if origin.begins_with("http") and await _probe_relay(origin):
+		_web_proxies.append("%s/%s?url=%%s" % [origin, WebServerScript.RELAY_PATH])
+	_web_proxies.append_array(CORS_PROXIES)
+	_web_proxies_busy = false
+	_web_proxies_ready = true
+
+
+## True only when [param origin] answers the launcher ping, i.e. this build is
+## served by our own tray launcher and its /__proxy relay is next door.
+func _probe_relay(origin: String) -> bool:
+	var http := HTTPRequest.new()
+	http.timeout = 2.0
+	add_child(http)
+	var err := http.request("%s/%s" % [origin, WebServerScript.LAUNCHER_PING_PATH])
+	if err != OK:
+		http.queue_free()
+		return false
+	var res: Array = await http.request_completed
+	http.queue_free()
+	if res[0] != HTTPRequest.RESULT_SUCCESS:
+		return false
+	return PackedByteArray(res[3]).get_string_from_ascii() == WebServerScript.LAUNCHER_PING_BODY
+
+
+## Blocks until _init_web_proxies() has finished (a few frames at most).
+func _ensure_web_proxies() -> void:
+	while not _web_proxies_ready:
+		await get_tree().process_frame
 
 
 # --- Cycle bookkeeping -------------------------------------------------------
@@ -373,7 +436,7 @@ func _release_request(asset: String, http: HTTPRequest) -> void:
 		return
 	_refreshing = false
 	# Every Yahoo symbol of the cycle was refused: rebuild the session once
-	# (desktop) or rotate to the next CORS proxy (web), then retry the cycle.
+	# (desktop) or rotate to the next transport (web), then retry the cycle.
 	if _succeeded == 0 and not _cycle_retried and not _current_symbols.is_empty():
 		_cycle_retried = true
 		if _is_web:

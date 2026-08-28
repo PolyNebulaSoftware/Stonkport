@@ -609,7 +609,10 @@ func _run_yf_search() -> void:
 		_pending_query = q
 		return
 	_searching = true
-	var err := _search_http.request(SEARCH_URL % q.uri_encode())
+	# Web builds cannot reach Yahoo directly; this rides the same relay/proxy
+	# transport as the quote client (unchanged URL off-web).
+	var url := await YFinance.proxied_url(SEARCH_URL % q.uri_encode())
+	var err := _search_http.request(url)
 	if err != OK:
 		_searching = false
 		push_warning("Analyze: Yahoo search request failed (%d)" % err)
